@@ -394,7 +394,7 @@ function LangSwitch({ lang, setLang }) {
 function Logo() {
   var [ok, setOk] = useState(true);
   return <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-    {ok && <img src="/logo.PNG" alt="matchours" onError={function(){ setOk(false); }}
+    {ok && <img src="/logo1.PNG" alt="matchours" onError={function(){ setOk(false); }}
       style={{ height: 30, width: "auto", objectFit: "contain" }} />}
     {!ok && <span style={{ color: COLORS.textPrimary, fontSize: 22, fontWeight: 800, letterSpacing: "-0.8px" }}>
       match<span style={{ color: COLORS.accent }}>ours</span></span>}
