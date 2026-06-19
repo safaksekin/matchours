@@ -267,9 +267,9 @@ function Pitch({ lineup, subbedOut, flip, label, color }) {
 
   var rowNums = Object.keys(rows).map(Number).sort(function(a,b){ return a-b; });
 
-  return <div>
+  return <div style={{ minWidth: 0 }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 6 }}>
-      <span style={{ color: COLORS.accent, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      <span style={{ color: COLORS.accent, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{label}</span>
       {lineup.formation && <span style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{lineup.formation}</span>}
     </div>
     <div style={{ position: "relative", width: "100%", aspectRatio: "68 / 100",
@@ -575,7 +575,7 @@ function MatchDetail({ match, isF1, t }) {
           var awayJersey = cols.away || "#ffffff";
 
           return <div>
-            <CascadeItem index={0}><div className="mo-pitches" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <CascadeItem index={0}><div className="mo-pitches" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" }}>
               <Pitch lineup={detail.lineups.home} subbedOut={outMap(homeTeamId)} flip={false} label={match.home} color={homeJersey} />
               <Pitch lineup={detail.lineups.away} subbedOut={outMap(awayTeamId)} flip={true} label={match.away} color={awayJersey} />
             </div></CascadeItem>
@@ -753,7 +753,7 @@ function MatchModal({ match, isF1, t, onClose }) {
     transition: "background 0.4s ease, backdrop-filter 0.4s ease, -webkit-backdrop-filter 0.4s ease",
     padding: "max(0px, env(safe-area-inset-top)) 0 0" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll" style={{
-      width: "100%", maxWidth: 720, height: "100%", overflowY: "auto",
+      width: "100%", maxWidth: 720, height: "100%", overflowY: "auto", overflowX: "hidden",
       WebkitOverflowScrolling: "touch",
       borderTopLeftRadius: 28, borderTopRightRadius: 28,
       // glassy translucent surface
@@ -783,15 +783,17 @@ function MatchModal({ match, isF1, t, onClose }) {
         </div>
         {isF1 ? <div style={{ color: COLORS.textPrimary, fontSize: 20, fontWeight: 800 }}>{match.home}</div>
         : <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11 }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
               <TeamLogo src={match.homeLogo} name={match.home} size={42} />
-              <span style={{ color: COLORS.textPrimary, fontSize: 19, fontWeight: 800 }}>{match.home}</span></div>
-            <div style={{ minWidth: 74, textAlign: "center", padding: "7px 14px", borderRadius: 14,
+              <span className="mo-team-name" style={{ color: COLORS.textPrimary, fontWeight: 800,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{match.home}</span></div>
+            <div style={{ minWidth: 66, textAlign: "center", padding: "7px 12px", borderRadius: 14, flexShrink: 0,
               background: showScore ? COLORS.accentDim : COLORS.cardAlt }}>
-              {showScore ? <span style={{ color: COLORS.accent, fontSize: 23, fontWeight: 800 }}>{match.score}</span>
-               : <span style={{ color: COLORS.textSecondary, fontSize: 16, fontWeight: 700 }}>{match.time}</span>}</div>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, justifyContent: "flex-end" }}>
-              <span style={{ color: COLORS.textPrimary, fontSize: 19, fontWeight: 800, textAlign: "right" }}>{match.away}</span>
+              {showScore ? <span style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800 }}>{match.score}</span>
+               : <span style={{ color: COLORS.textSecondary, fontSize: 15, fontWeight: 700 }}>{match.time}</span>}</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, justifyContent: "flex-end", minWidth: 0 }}>
+              <span className="mo-team-name" style={{ color: COLORS.textPrimary, fontWeight: 800, textAlign: "right",
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{match.away}</span>
               <TeamLogo src={match.awayLogo} name={match.away} size={42} /></div>
           </div>}
       </div>
@@ -817,7 +819,7 @@ function LangSwitch({ lang, setLang }) {
 function Logo() {
   var [ok, setOk] = useState(true);
   return <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-    {ok && <img src="/logo1.PNG" alt="matchours" onError={function(){ setOk(false); }}
+    {ok && <img src="/logo.png" alt="matchours" onError={function(){ setOk(false); }}
       style={{ height: 30, width: "auto", objectFit: "contain" }} />}
     {!ok && <span style={{ color: COLORS.textPrimary, fontSize: 22, fontWeight: 800, letterSpacing: "-0.8px" }}>
       match<span style={{ color: COLORS.accent }}>ours</span></span>}
@@ -1016,6 +1018,8 @@ export default function Home() {
       ".mo-sticky{position:-webkit-sticky;position:sticky;top:0;-webkit-transform:translateZ(0);transform:translateZ(0)}" +
       // responsive container: phone 1 col, tablet wider, desktop 2-col grid
       ".mo-container{max-width:560px;margin:0 auto;width:100%}" +
+      ".mo-team-name{font-size:15px}" +
+      "@media(min-width:600px){.mo-team-name{font-size:19px}}" +
       ".mo-grid{display:block}" +
       ".mo-header-inner{max-width:560px;margin:0 auto;width:100%}" +
       "@media(min-width:900px){" +
