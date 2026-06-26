@@ -288,18 +288,18 @@ function StatRow({ label, value }) {
 // Sport category tab: icon on top, label below, tube-light glow when active.
 // Slides its content in from left/right when slideKey changes (category switch).
 function SlidePanel({ slideKey, dir, children }) {
-  var [shown, setShown] = useState(children);
+  // Render children DIRECTLY (no stale "shown" state) so async data updates always show.
+  // Only trigger the slide-in animation when slideKey changes (category switch).
   var [enter, setEnter] = useState(false);
   var keyRef = useRef(slideKey);
 
   useEffect(function(){
-    if (slideKey === keyRef.current) { setShown(children); return; }
+    if (slideKey === keyRef.current) return;
     keyRef.current = slideKey;
-    setShown(children);
     setEnter(true);
     var id = setTimeout(function(){ setEnter(false); }, 20);
     return function(){ clearTimeout(id); };
-  }, [slideKey, children]);
+  }, [slideKey]);
 
   var offset = (dir >= 0 ? 1 : -1) * 26;
   return <div style={{ position: "relative", overflow: "hidden" }}>
@@ -307,7 +307,7 @@ function SlidePanel({ slideKey, dir, children }) {
       opacity: enter ? 0 : 1,
       transform: enter ? "translateX(" + offset + "px)" : "translateX(0)",
       transition: enter ? "none" : "opacity 0.38s cubic-bezier(0.22,1,0.36,1), transform 0.38s cubic-bezier(0.22,1,0.36,1)" }}>
-      {shown}
+      {children}
     </div>
   </div>;
 }
