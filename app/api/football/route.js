@@ -55,13 +55,18 @@ async function apiGet(path, revalidate) {
     const res = await fetch(url, { headers: hdr() });
     if (!res.ok) return null;
     const text = await res.text();
-    if (edge) {
+    let j;
+    try { j = JSON.parse(text); } catch (e) { return null; }
+    const errs = j && j.errors;
+    const hasErr = errs && (Array.isArray(errs) ? errs.length > 0 : Object.keys(errs).length > 0);
+    if (hasErr) return null; // rate-limited / error -> don't cache, let it retry
+    const resp = (j && j.response) ? j.response : null;
+    if (edge && resp) {
       await edge.put(key, new Response(text, {
         headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl },
       }));
     }
-    const j = JSON.parse(text);
-    return j && j.response ? j.response : null;
+    return resp;
   } catch (e) { return null; }
 }
 
@@ -679,6 +684,8 @@ export async function GET(request) {
       const dTo = to.toISOString().split("T")[0];
       let data = await apiGet("/fixtures?league=" + league + "&season=" + season + "&from=" + dFrom + "&to=" + dTo, 60);
       if (!data || !data.length) data = await apiGet("/fixtures?league=" + league + "&season=" + season + "&last=20", 120);
+      // current season not started yet -> show last season's recent matches
+      if (!data || !data.length) data = await apiGet("/fixtures?league=" + league + "&season=" + (parseInt(season, 10) - 1) + "&last=20", 600);
       const out = (data || []).slice(0, 40).map(function (item) { return mapFixture(item, item.league && item.league.name); });
       const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
       out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
@@ -742,7 +749,11 @@ export async function GET(request) {
   if (mode === "standings") {
     const leagueId = searchParams.get("league");
     const season = searchParams.get("season") || 2025;
-    const data = await apiGet("/standings?league=" + leagueId + "&season=" + season, 300);
+    let data = await apiGet("/standings?league=" + leagueId + "&season=" + season, 300);
+    // current season has no table yet -> fall back to previous season
+    if (!data || !data[0] || !data[0].league || !data[0].league.standings) {
+      data = await apiGet("/standings?league=" + leagueId + "&season=" + (parseInt(season, 10) - 1), 600);
+    }
     const groups = [];
     if (data && data[0] && data[0].league && data[0].league.standings) {
       data[0].league.standings.forEach(function (group) {
@@ -769,7 +780,8 @@ export async function GET(request) {
   if (mode === "scorers") {
     const leagueId = searchParams.get("league");
     const season = searchParams.get("season") || 2025;
-    const data = await apiGet("/players/topscorers?league=" + leagueId + "&season=" + season, 600);
+    let data = await apiGet("/players/topscorers?league=" + leagueId + "&season=" + season, 600);
+    if (!data || !data.length) data = await apiGet("/players/topscorers?league=" + leagueId + "&season=" + (parseInt(season, 10) - 1), 600);
     const list = [];
     (data || []).slice(0, 10).forEach(function (p) {
       const st = (p.statistics && p.statistics[0]) || {};
