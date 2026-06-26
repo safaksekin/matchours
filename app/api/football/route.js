@@ -42,7 +42,9 @@ function leagueTierKey(l) {
 
 // Cache successful API-Football responses at the Cloudflare edge (keyed by URL) so repeated
 // navigation doesn't re-hit api-sports and blow the free-plan rate limit. Only 200s are cached.
-async function apiGet(path, revalidate) {
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+async function apiGet(path, revalidate, _retried) {
   const ttl = revalidate || 60;
   const url = HOST + path;
   const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
@@ -53,13 +55,20 @@ async function apiGet(path, revalidate) {
       if (hit) { const j = JSON.parse(await hit.text()); return j && j.response ? j.response : null; }
     }
     const res = await fetch(url, { headers: hdr() });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // rate-limited / transient -> wait briefly and retry once (limits are per-second)
+      if (!_retried && (res.status === 429 || res.status >= 500)) { await sleep(900); return apiGet(path, revalidate, true); }
+      return null;
+    }
     const text = await res.text();
     let j;
     try { j = JSON.parse(text); } catch (e) { return null; }
     const errs = j && j.errors;
     const hasErr = errs && (Array.isArray(errs) ? errs.length > 0 : Object.keys(errs).length > 0);
-    if (hasErr) return null; // rate-limited / error -> don't cache, let it retry
+    if (hasErr) {
+      if (!_retried) { await sleep(900); return apiGet(path, revalidate, true); } // retry rate-limited once
+      return null;
+    }
     const resp = (j && j.response) ? j.response : null;
     if (edge && resp) {
       await edge.put(key, new Response(text, {
