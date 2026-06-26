@@ -515,6 +515,17 @@ export async function GET(request) {
     });
   }
 
+  // ── Diagnostic: api-sports account plan + rate limits (temporary) ──
+  if (mode === "quota") {
+    try {
+      const res = await fetch(HOST + "/status", { headers: hdr() });
+      const j = await res.json();
+      const rl = {};
+      res.headers.forEach(function (v, k) { if (k.toLowerCase().indexOf("ratelimit") >= 0) rl[k] = v; });
+      return Response.json({ status: j.response || null, rateLimitHeaders: rl, errors: j.errors || null });
+    } catch (e) { return Response.json({ error: String(e) }); }
+  }
+
   // ── Matches on a specific date (date strip on the right column) ──
   if (mode === "bydate") {
     const sport = searchParams.get("sport") || "football";
