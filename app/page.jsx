@@ -1631,26 +1631,21 @@ function StandoutsRating({ players, t, onClose }) {
 
 // Boxless feed: today's matches then previous days, each under a small date header.
 function DayMatchList({ matches, t, isF1, onOpen }) {
-  var todayKey = isoLocal(new Date());
-  var hasKeys = (matches || []).some(function(m){ return m.dateKey; });
+  if (!matches || matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
+  var hasKeys = matches.some(function(m){ return m.dateKey; });
   if (!hasKeys) {
-    if (!matches || matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
+    // no date info (e.g. other sports) -> flat list
     return <div>{matches.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
       divider={i < matches.length - 1} onOpen={function(){ onOpen(m); }} />; })}</div>;
   }
-  // group by day, keep today + past only, newest day first
+  var todayKey = isoLocal(new Date());
+  // group ALL matches by day (today, upcoming and past), newest day first
   var groups = {};
-  (matches || []).forEach(function(m){
-    var k = m.dateKey || todayKey;
-    if (k > todayKey) return; // future lives in the carousel / standouts
-    if (!groups[k]) groups[k] = [];
-    groups[k].push(m);
-  });
+  matches.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
   var keys = Object.keys(groups).sort(function(a, b){ return a < b ? 1 : (a > b ? -1 : 0); });
-  if (keys.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
   function header(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
   return <div>
-    {keys.map(function(k, gi){
+    {keys.map(function(k){
       var list = groups[k];
       list.sort(function(a, b){ return (a.ts || 0) - (b.ts || 0); });
       return <div key={k} style={{ marginBottom: 4 }}>
