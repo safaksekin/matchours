@@ -876,11 +876,14 @@ export async function GET(request) {
     const homeTeam = searchParams.get("home");
     const awayTeam = searchParams.get("away");
 
-    const lineupData = await apiGet("/fixtures/lineups?fixture=" + fixtureId, 120);
-    const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, 60);
-    const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, 60);
-    const injuryData = await apiGet("/injuries?fixture=" + fixtureId, 300);
-    const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, 60);
+    // Keep per-match api calls low (rate limits): core 4 always, the rest only pre-match.
+    const lineupData = await apiGet("/fixtures/lineups?fixture=" + fixtureId, 600);
+    const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, 120);
+    const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, 120);
+    const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, 120);
+    const hasMatchStats = !!(statsData && statsData.length);
+    // injuries + season averages are only shown before kickoff -> skip them once the match has stats
+    const injuryData = hasMatchStats ? null : await apiGet("/injuries?fixture=" + fixtureId, 300);
 
     function sideLineup(entry) {
       if (!entry) return { formation: null, starting: [], bench: [], coach: null, teamId: null, color: null };
@@ -1014,8 +1017,8 @@ export async function GET(request) {
         loses: d.fixtures && d.fixtures.loses && d.fixtures.loses.total,
       };
     }
-    const homeSeason = await teamSeason(homeTeam);
-    const awaySeason = await teamSeason(awayTeam);
+    const homeSeason = hasMatchStats ? null : await teamSeason(homeTeam);
+    const awaySeason = hasMatchStats ? null : await teamSeason(awayTeam);
 
     // per-player match stats (Sofascore-style). One side = one /fixtures/players entry.
     function mapPlayers(entry, side) {
