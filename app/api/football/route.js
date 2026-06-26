@@ -40,11 +40,27 @@ function leagueTierKey(l) {
   return 800;                          // cups / everything else
 }
 
+// Cache successful API-Football responses at the Cloudflare edge (keyed by URL) so repeated
+// navigation doesn't re-hit api-sports and blow the free-plan rate limit. Only 200s are cached.
 async function apiGet(path, revalidate) {
+  const ttl = revalidate || 60;
+  const url = HOST + path;
+  const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
+  const key = edge ? new Request(url, { method: "GET" }) : null;
   try {
-    const res = await fetch(HOST + path, { headers: hdr(), next: { revalidate: revalidate || 60 } });
+    if (edge) {
+      const hit = await edge.match(key);
+      if (hit) { const j = JSON.parse(await hit.text()); return j && j.response ? j.response : null; }
+    }
+    const res = await fetch(url, { headers: hdr() });
     if (!res.ok) return null;
-    const j = await res.json();
+    const text = await res.text();
+    if (edge) {
+      await edge.put(key, new Response(text, {
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl },
+      }));
+    }
+    const j = JSON.parse(text);
     return j && j.response ? j.response : null;
   } catch (e) { return null; }
 }
@@ -543,15 +559,15 @@ export async function GET(request) {
     LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
     // walk back up to a week to find the latest day with finished fixtures in our leagues
     let chosen = null, fixtures = [];
-    for (let back = 0; back < 8 && !chosen; back++) {
+    for (let back = 0; back < 4 && !chosen; back++) {
       const dd = new Date(start + "T00:00:00");
       dd.setDate(dd.getDate() - back);
       const dk = ymd(dd);
-      const data = await apiGet("/fixtures?date=" + dk, 600);
+      const data = await apiGet("/fixtures?date=" + dk, 3600);
       const fin = (data || []).filter(function (it) {
         return nameById[it.league && it.league.id] && statusOf(it.fixture.status && it.fixture.status.short) === "finished";
       });
-      if (fin.length) { chosen = dk; fixtures = fin.slice(0, 4); }
+      if (fin.length) { chosen = dk; fixtures = fin.slice(0, 3); }
     }
     if (!chosen) return Response.json({ players: [], date: null });
     const all = [];
@@ -1085,7 +1101,7 @@ export async function GET(request) {
   for (const lg of LEAGUES) {
     const data = await apiGet(
       "/fixtures?league=" + lg.id + "&season=" + lg.season + "&from=" + dFrom + "&to=" + dTo,
-      30
+      300
     );
     if (data && data.length) {
       data.slice(0, 20).forEach(function (item) { add(item, lg.name); });
