@@ -2514,7 +2514,8 @@ export default function Home() {
     if (!loggedIn) return;
     // "live" reads from the football dataset (single source of truth)
     var source = (activeSport === "live") ? "football" : activeSport;
-    if (data[source]) return;
+    // re-fetch if we have no real data yet (empty [] is truthy, so it would otherwise stick forever)
+    if (data[source] && data[source].length > 0) return;
     var cancelled = false;
     setLoading(true);
     if (source === "football") {

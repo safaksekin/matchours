@@ -607,37 +607,38 @@ export async function GET(request) {
     }
 
     if (sport === "football" || sport === "live") {
-      const data = await apiGet("/leagues?current=true", 86400);
-      const INTL_IDS = [1, 2, 3, 848]; // World Cup, Champions League, Europa League, Conference League
-      const byCountry = {};
-      const intl = {};
-      (data || []).forEach(function (x) {
-        const L = x.league || {}; const co = x.country || {};
-        let yr = null;
-        (x.seasons || []).forEach(function (s) { if (s.current) yr = s.year; });
-        if (INTL_IDS.indexOf(L.id) >= 0) { intl[L.id] = { id: L.id, name: L.name, logo: L.logo, type: L.type, season: yr }; return; }
-        if (yr == null || yr < 2024) return;   // drop defunct leagues
-        if ((co.name || "") === "World") return; // World handled by the curated intl group below
-        const key = co.name || "—";
-        if (!byCountry[key]) byCountry[key] = { country: key, flag: co.flag || null, leagues: [] };
-        byCountry[key].leagues.push({ id: L.id, name: L.name, logo: L.logo, type: L.type, season: yr });
-      });
-      // tier-sort, then keep only the top 4 divisions per country (keep it simple)
-      Object.keys(byCountry).forEach(function (k) {
-        byCountry[k].leagues.sort(function (a, b) {
+      const LOGO = function (id) { return "https://media.api-sports.io/football/leagues/" + id + ".png"; };
+      const groups = [];
+      // International group (curated, no api call): World Cup 2026, UCL, UEL, Conference
+      groups.push({ country: "International", flag: null, leagues: [
+        { id: 1, name: "World Cup 2026", logo: LOGO(1), type: "Cup", season: 2026 },
+        { id: 2, name: "UEFA Champions League", logo: LOGO(2), type: "Cup", season: 2025 },
+        { id: 3, name: "UEFA Europa League", logo: LOGO(3), type: "Cup", season: 2025 },
+        { id: 848, name: "UEFA Europa Conference League", logo: LOGO(848), type: "Cup", season: 2025 },
+      ] });
+      // only the top countries (down to USA) — small per-country calls, avoids the giant all-leagues parse
+      const COUNTRIES = ["England", "Spain", "Germany", "Italy", "France", "Turkey", "Netherlands", "Portugal", "Belgium", "Brazil", "Argentina", "USA"];
+      for (const country of COUNTRIES) {
+        const data = await apiGet("/leagues?country=" + encodeURIComponent(country) + "&current=true", 86400);
+        if (!data || !data.length) continue;
+        let flag = null;
+        const leagues = [];
+        data.forEach(function (x) {
+          const L = x.league || {}; const co = x.country || {};
+          if (!flag && co.flag) flag = co.flag;
+          let yr = null;
+          (x.seasons || []).forEach(function (s) { if (s.current) yr = s.year; });
+          if (yr == null || yr < 2024) return;
+          leagues.push({ id: L.id, name: L.name, logo: L.logo, type: L.type, season: yr });
+        });
+        leagues.sort(function (a, b) {
           var ka = leagueTierKey(a), kb = leagueTierKey(b);
           if (ka !== kb) return ka - kb;
           if (a.id !== b.id) return a.id - b.id;
           return a.name.localeCompare(b.name);
         });
-        byCountry[k].leagues = byCountry[k].leagues.slice(0, 4);
-      });
-      const groups = sortGroups(byCountry);
-      // curated international group pinned to the top: World Cup 2026, then UCL / UEL / Conference
-      const intlLeagues = [];
-      if (intl[1]) { intl[1].name = "World Cup 2026"; intl[1].season = 2026; intlLeagues.push(intl[1]); }
-      [2, 3, 848].forEach(function (id) { if (intl[id]) intlLeagues.push(intl[id]); });
-      if (intlLeagues.length) groups.unshift({ country: "International", flag: null, leagues: intlLeagues });
+        if (leagues.length) groups.push({ country: country, flag: flag, leagues: leagues.slice(0, 4) });
+      }
       return Response.json({ leagues: groups });
     }
 
