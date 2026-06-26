@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "matchours",
+  "main": ".open-next/worker.js",
+  "workers_dev": false,
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+  // Runtime secret (APISPORTS_KEY) is NOT stored here. Set it with:
+  //   npx wrangler secret put APISPORTS_KEY
+  // or in the Cloudflare dashboard. For local `npm run preview`, it is read
+  // from the gitignored .dev.vars file.
+}

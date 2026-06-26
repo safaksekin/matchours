@@ -18,6 +18,28 @@ const LEAGUES = [
 
 function hdr() { return { "x-apisports-key": process.env.APISPORTS_KEY || "" }; }
 
+// Curated tier order (lower = higher division) so league trees read top-down by level,
+// e.g. England: Premier League -> Championship -> League One; Turkey: Super Lig -> 1. Lig.
+const LEAGUE_TIER = {
+  1: 1,                                   // World Cup
+  39: 1, 40: 2, 41: 3, 42: 4, 43: 5,      // England
+  140: 1, 141: 2, 142: 3,                 // Spain
+  135: 1, 136: 2,                         // Italy
+  78: 1, 79: 2, 80: 3,                    // Germany
+  61: 1, 62: 2, 63: 3,                    // France
+  203: 1, 204: 2, 205: 3,                 // Turkey
+  88: 1, 89: 2,                           // Netherlands
+  94: 1, 95: 2,                           // Portugal
+  144: 1, 145: 2,                         // Belgium
+  179: 1, 180: 2,                         // Scotland
+};
+function leagueTierKey(l) {
+  var p = LEAGUE_TIER[l.id];
+  if (p != null) return p;             // curated top divisions: 1..N
+  if (l.type === "League") return 400; // other domestic leagues
+  return 800;                          // cups / everything else
+}
+
 async function apiGet(path, revalidate) {
   try {
     const res = await fetch(HOST + path, { headers: hdr(), next: { revalidate: revalidate || 60 } });
@@ -44,6 +66,12 @@ function statusOf(short) {
   return "upcoming";
 }
 
+function ymd(d) {
+  var m = ("0" + (d.getMonth() + 1)).slice(-2);
+  var day = ("0" + d.getDate()).slice(-2);
+  return d.getFullYear() + "-" + m + "-" + day;
+}
+
 function mapFixture(item, leagueName) {
   const fx = item.fixture;
   const d = new Date(fx.date);
@@ -64,6 +92,7 @@ function mapFixture(item, leagueName) {
     leagueId: item.league && item.league.id,
     season: item.league && item.league.season,
     status: statusOf(short),
+    dateKey: ymd(d), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
     stats: {
@@ -456,6 +485,219 @@ export async function GET(request) {
     });
   }
 
+  // ── Matches on a specific date (date strip on the right column) ──
+  if (mode === "bydate") {
+    const sport = searchParams.get("sport") || "football";
+    const date = searchParams.get("date");
+    if (!date) return Response.json({ matches: [] });
+
+    if (sport === "football" || sport === "live") {
+      const data = await apiGet("/fixtures?date=" + date, 120);
+      const nameById = {};
+      LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
+      const out = [];
+      (data || []).forEach(function (item) {
+        const lid = item.league && item.league.id;
+        if (!nameById[lid]) return; // only our tracked leagues
+        out.push(mapFixture(item, nameById[lid]));
+      });
+      const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
+      out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
+      return Response.json({ matches: out });
+    }
+
+    const HOSTS = { basketball: "https://v1.basketball.api-sports.io", volleyball: "https://v1.volleyball.api-sports.io" };
+    const host = HOSTS[sport];
+    if (!host) return Response.json({ matches: [] });
+    try {
+      const res = await fetch(host + "/games?date=" + date, { headers: hdr(), next: { revalidate: 120 } });
+      const j = await res.json();
+      const resp = (j && j.response) ? j.response : [];
+      const out = [];
+      resp.slice(0, 60).forEach(function (g, i) {
+        const teams = g.teams || {}; const h = teams.home || {}; const a = teams.away || {};
+        var st = "upcoming";
+        var ss = (g.status && (g.status.short || g.status.long)) || "";
+        if (/(finished|FT|AOT|Final)/i.test(ss)) st = "finished";
+        else if (/(Q1|Q2|Q3|Q4|live|in play|HT|OT|set)/i.test(ss)) st = "live";
+        var sc = null;
+        if (g.scores && g.scores.home != null && g.scores.away != null) sc = g.scores.home + " - " + g.scores.away;
+        var d = g.date ? new Date(typeof g.date === "string" ? g.date : (g.date.start || g.date)) : null;
+        out.push({
+          id: sport + "-" + (g.id || i), home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
+          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "",
+          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }) : "",
+          league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
+        });
+      });
+      return Response.json({ matches: out });
+    } catch (e) { return Response.json({ matches: [] }); }
+  }
+
+  // ── Standout players of the (most recent) match day: top 3 by real match rating ──
+  if (mode === "standouts") {
+    const sport = searchParams.get("sport") || "football";
+    if (sport !== "football" && sport !== "live") return Response.json({ players: [], date: null });
+    const start = searchParams.get("date") || ymd(new Date());
+    const nameById = {};
+    LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
+    // walk back up to a week to find the latest day with finished fixtures in our leagues
+    let chosen = null, fixtures = [];
+    for (let back = 0; back < 8 && !chosen; back++) {
+      const dd = new Date(start + "T00:00:00");
+      dd.setDate(dd.getDate() - back);
+      const dk = ymd(dd);
+      const data = await apiGet("/fixtures?date=" + dk, 600);
+      const fin = (data || []).filter(function (it) {
+        return nameById[it.league && it.league.id] && statusOf(it.fixture.status && it.fixture.status.short) === "finished";
+      });
+      if (fin.length) { chosen = dk; fixtures = fin.slice(0, 4); }
+    }
+    if (!chosen) return Response.json({ players: [], date: null });
+    const all = [];
+    for (const fx of fixtures) {
+      const pdata = await apiGet("/fixtures/players?fixture=" + fx.fixture.id, 600);
+      (pdata || []).forEach(function (entry) {
+        const tname = entry.team && entry.team.name;
+        (entry.players || []).forEach(function (pp) {
+          const p = pp.player || {};
+          const st = (pp.statistics && pp.statistics[0]) || {};
+          const g = st.games || {};
+          if (g.rating == null) return;
+          const rv = parseFloat(g.rating);
+          if (isNaN(rv)) return;
+          all.push({
+            id: p.id, name: p.name || "?",
+            photo: p.photo || (p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null),
+            team: tname || "", rating: Math.round(rv * 100) / 100,
+          });
+        });
+      });
+    }
+    all.sort(function (a, b) { return b.rating - a.rating; });
+    return Response.json({ players: all.slice(0, 3), date: chosen });
+  }
+
+  // ── League tree per sport (flashscore-style country -> leagues) ──
+  if (mode === "leagues") {
+    const sport = searchParams.get("sport") || "football";
+    const TOP = ["World", "England", "Spain", "Germany", "Italy", "France", "Turkey", "Netherlands", "Portugal", "Belgium", "Brazil", "Argentina", "USA"];
+    function sortGroups(byCountry) {
+      return Object.keys(byCountry).sort(function (a, b) {
+        const ia = TOP.indexOf(a), ib = TOP.indexOf(b);
+        if (ia !== -1 || ib !== -1) { if (ia === -1) return 1; if (ib === -1) return -1; return ia - ib; }
+        return a.localeCompare(b);
+      }).map(function (k) { return byCountry[k]; });
+    }
+
+    if (sport === "football" || sport === "live") {
+      const data = await apiGet("/leagues?current=true", 86400);
+      const INTL_IDS = [1, 2, 3, 848]; // World Cup, Champions League, Europa League, Conference League
+      const byCountry = {};
+      const intl = {};
+      (data || []).forEach(function (x) {
+        const L = x.league || {}; const co = x.country || {};
+        let yr = null;
+        (x.seasons || []).forEach(function (s) { if (s.current) yr = s.year; });
+        if (INTL_IDS.indexOf(L.id) >= 0) { intl[L.id] = { id: L.id, name: L.name, logo: L.logo, type: L.type, season: yr }; return; }
+        if (yr == null || yr < 2024) return;   // drop defunct leagues
+        if ((co.name || "") === "World") return; // World handled by the curated intl group below
+        const key = co.name || "—";
+        if (!byCountry[key]) byCountry[key] = { country: key, flag: co.flag || null, leagues: [] };
+        byCountry[key].leagues.push({ id: L.id, name: L.name, logo: L.logo, type: L.type, season: yr });
+      });
+      // tier-sort, then keep only the top 4 divisions per country (keep it simple)
+      Object.keys(byCountry).forEach(function (k) {
+        byCountry[k].leagues.sort(function (a, b) {
+          var ka = leagueTierKey(a), kb = leagueTierKey(b);
+          if (ka !== kb) return ka - kb;
+          if (a.id !== b.id) return a.id - b.id;
+          return a.name.localeCompare(b.name);
+        });
+        byCountry[k].leagues = byCountry[k].leagues.slice(0, 4);
+      });
+      const groups = sortGroups(byCountry);
+      // curated international group pinned to the top: World Cup 2026, then UCL / UEL / Conference
+      const intlLeagues = [];
+      if (intl[1]) { intl[1].name = "World Cup 2026"; intl[1].season = 2026; intlLeagues.push(intl[1]); }
+      [2, 3, 848].forEach(function (id) { if (intl[id]) intlLeagues.push(intl[id]); });
+      if (intlLeagues.length) groups.unshift({ country: "International", flag: null, leagues: intlLeagues });
+      return Response.json({ leagues: groups });
+    }
+
+    const HOSTS = { basketball: "https://v1.basketball.api-sports.io", volleyball: "https://v1.volleyball.api-sports.io" };
+    const host = HOSTS[sport];
+    if (!host) return Response.json({ leagues: [] });
+    try {
+      const res = await fetch(host + "/leagues", { headers: hdr(), next: { revalidate: 86400 } });
+      const j = await res.json();
+      const resp = (j && j.response) ? j.response : [];
+      const byCountry = {};
+      resp.forEach(function (x) {
+        const co = x.country || {};
+        const cname = (typeof co === "string") ? co : (co.name || "—");
+        const flag = (typeof co === "object") ? (co.flag || null) : null;
+        const seasons = x.seasons || [];
+        let yr = null;
+        if (seasons.length) { const last = seasons[seasons.length - 1]; yr = last.season || last.year || null; }
+        if (!byCountry[cname]) byCountry[cname] = { country: cname, flag: flag, leagues: [] };
+        byCountry[cname].leagues.push({ id: x.id, name: x.name, logo: x.logo || null, type: x.type || "League", season: yr });
+      });
+      return Response.json({ leagues: sortGroups(byCountry) });
+    } catch (e) { return Response.json({ leagues: [] }); }
+  }
+
+  // ── Fixtures for one league (clicked in the league tree) ──
+  if (mode === "leaguefixtures") {
+    const sport = searchParams.get("sport") || "football";
+    const league = searchParams.get("league");
+    const season = searchParams.get("season") || 2025;
+    if (!league) return Response.json({ matches: [] });
+
+    if (sport === "football" || sport === "live") {
+      const today = new Date();
+      const from = new Date(today); from.setDate(today.getDate() - 3);
+      const to = new Date(today); to.setDate(today.getDate() + 30);
+      const dFrom = from.toISOString().split("T")[0];
+      const dTo = to.toISOString().split("T")[0];
+      let data = await apiGet("/fixtures?league=" + league + "&season=" + season + "&from=" + dFrom + "&to=" + dTo, 60);
+      if (!data || !data.length) data = await apiGet("/fixtures?league=" + league + "&season=" + season + "&last=20", 120);
+      const out = (data || []).slice(0, 40).map(function (item) { return mapFixture(item, item.league && item.league.name); });
+      const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
+      out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
+      return Response.json({ matches: out });
+    }
+
+    const HOSTS = { basketball: "https://v1.basketball.api-sports.io", volleyball: "https://v1.volleyball.api-sports.io" };
+    const host = HOSTS[sport];
+    if (!host) return Response.json({ matches: [] });
+    try {
+      const res = await fetch(host + "/games?league=" + league + "&season=" + season, { headers: hdr(), next: { revalidate: 120 } });
+      const j = await res.json();
+      const resp = (j && j.response) ? j.response : [];
+      const out = [];
+      resp.slice(0, 40).forEach(function (g, i) {
+        const teams = g.teams || {}; const h = teams.home || {}; const a = teams.away || {};
+        const dt = g.date || (g.fixture && g.fixture.date) || null;
+        const d = dt ? new Date(typeof dt === "string" ? dt : (dt.start || dt)) : null;
+        var st = "upcoming";
+        var ss = (g.status && (g.status.short || g.status.long)) || "";
+        if (/(finished|FT|AOT|Final)/i.test(ss)) st = "finished";
+        else if (/(Q1|Q2|Q3|Q4|live|in play|HT|OT|set)/i.test(ss)) st = "live";
+        var sc = null;
+        if (g.scores && g.scores.home != null && g.scores.away != null) sc = g.scores.home + " - " + g.scores.away;
+        out.push({
+          id: sport + "-" + (g.id || i),
+          home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
+          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "",
+          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }) : "",
+          league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
+        });
+      });
+      return Response.json({ matches: out });
+    } catch (e) { return Response.json({ matches: [] }); }
+  }
+
   // ── Weather by city (Open-Meteo, free, no key) ──
   if (mode === "weather") {
     const city = searchParams.get("city");
@@ -621,6 +863,8 @@ export async function GET(request) {
             position: p.pos || null,
             shirt: p.number != null ? p.number : null,
             grid: p.grid || null,
+            // photo follows a stable id-based URL, so heads render even when /fixtures/players is empty
+            photo: p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null,
           };
         });
       }
