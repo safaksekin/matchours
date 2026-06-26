@@ -559,7 +559,7 @@ export async function GET(request) {
     LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
     // walk back up to a week to find the latest day with finished fixtures in our leagues
     let chosen = null, fixtures = [];
-    for (let back = 0; back < 4 && !chosen; back++) {
+    for (let back = 0; back < 2 && !chosen; back++) {
       const dd = new Date(start + "T00:00:00");
       dd.setDate(dd.getDate() - back);
       const dk = ymd(dd);

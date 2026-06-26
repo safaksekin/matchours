@@ -2565,10 +2565,14 @@ export default function Home() {
     setSelectedLeague(null);
     if (leagueTree[sport]) return;
     setLeagueTreeLoading(true);
-    fetch("/api/football?mode=leagues&sport=" + sport)
-      .then(function(r){ return r.json(); })
-      .then(function(j){ setLeagueTree(function(p){ var n = {}; n[sport] = j.leagues || []; return Object.assign({}, p, n); }); setLeagueTreeLoading(false); })
-      .catch(function(){ setLeagueTree(function(p){ var n = {}; n[sport] = []; return Object.assign({}, p, n); }); setLeagueTreeLoading(false); });
+    // deferred so it doesn't burst alongside the critical match-list fetch
+    var id = setTimeout(function(){
+      fetch("/api/football?mode=leagues&sport=" + sport)
+        .then(function(r){ return r.json(); })
+        .then(function(j){ setLeagueTree(function(p){ var n = {}; n[sport] = j.leagues || []; return Object.assign({}, p, n); }); setLeagueTreeLoading(false); })
+        .catch(function(){ setLeagueTree(function(p){ var n = {}; n[sport] = []; return Object.assign({}, p, n); }); setLeagueTreeLoading(false); });
+    }, 1500);
+    return function(){ clearTimeout(id); };
   }, [loggedIn, activeSport]);
 
   // load fixtures for the clicked league
@@ -2583,15 +2587,19 @@ export default function Home() {
     return function(){ cancelled = true; };
   }, [selectedLeague]);
 
-  // standouts of the day (football only), fetched once
+  // standouts of the day (football only), fetched once — DEFERRED so its heavy burst of
+  // api-sports calls doesn't compete with the critical match-list fetch and trip rate limits.
   useEffect(function(){
     if (!loggedIn) return;
     if (activeSport !== "football" && activeSport !== "live") return;
     if (standouts.length > 0) return;
-    fetch("/api/football?mode=standouts&sport=football")
-      .then(function(r){ return r.json(); })
-      .then(function(j){ setStandouts(j.players || []); })
-      .catch(function(){ setStandouts([]); });
+    var id = setTimeout(function(){
+      fetch("/api/football?mode=standouts&sport=football")
+        .then(function(r){ return r.json(); })
+        .then(function(j){ setStandouts(j.players || []); })
+        .catch(function(){ setStandouts([]); });
+    }, 3000);
+    return function(){ clearTimeout(id); };
   }, [loggedIn, activeSport]);
 
   // slide the purple tubelight under the active sport tab
