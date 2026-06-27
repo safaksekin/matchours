@@ -1210,36 +1210,37 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading }) {
                 : <Pitch lineup={detail.lineups.away} subbedOut={outMap(awayTeamId)} flip={true} label={locTeam(match.away, t)} color={awayJersey} ratings={ratingById} players={playerById} onPlayerClick={setPStat} />}
             </CascadeItem>
 
-            {/* substitutions + bench */}
-            <CascadeItem index={1}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
-              {[{ name: match.home, lu: detail.lineups.home, sb: teamSubs(homeTeamId) },
-                { name: match.away, lu: detail.lineups.away, sb: teamSubs(awayTeamId) }].map(function(blk, bi){
-                return <div key={bi}>
-                  {blk.sb.length > 0 && <div style={{ marginBottom: 12 }}>
-                    <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>{t.substitutions}</div>
-                    {blk.sb.map(function(s, i){
-                      return <div key={i} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid " + COLORS.border }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ color: COLORS.accent, fontSize: 11 }}>↑</span>
-                          <span style={{ color: COLORS.textPrimary, flex: 1 }}>{s.inName}</span>
-                          {s.minute != null && <span style={{ color: COLORS.textMuted, fontSize: 10 }}>{s.minute}'</span>}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ color: COLORS.red, fontSize: 11 }}>↓</span>
-                          <span style={{ color: COLORS.textSecondary, flex: 1 }}>{s.outName}</span>
-                        </div>
-                      </div>; })}
-                  </div>}
-                  {blk.lu.bench && blk.lu.bench.length > 0 && <div>
-                    <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>{t.bench}</div>
-                    {blk.lu.bench.map(function(p, i){
-                      return <div key={i} style={{ color: COLORS.textSecondary, fontSize: 11, padding: "3px 0", display: "flex", gap: 7, alignItems: "center" }}>
-                        <span style={{ color: COLORS.textMuted, fontSize: 10, width: 18, textAlign: "right" }}>{p.shirt != null ? p.shirt : ""}</span>
-                        <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
-                        {ratingById[p.id] != null && <RatingBadge rating={ratingById[p.id]} style={{ minWidth: 0, padding: "0px 4px", fontSize: 10 }} />}</div>; })}
-                  </div>}
-                </div>; })}
-            </div></CascadeItem>
+            {/* substitutions + bench — follow the selected team (same side as the pitch toggle) */}
+            <CascadeItem index={1}>{(function(){
+              var blk = squadSide === "home"
+                ? { lu: detail.lineups.home, sb: teamSubs(homeTeamId) }
+                : { lu: detail.lineups.away, sb: teamSubs(awayTeamId) };
+              return <div style={{ marginTop: 16 }}>
+                {blk.sb.length > 0 && <div style={{ marginBottom: 12 }}>
+                  <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>{t.substitutions}</div>
+                  {blk.sb.map(function(s, i){
+                    return <div key={i} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid " + COLORS.border }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ color: COLORS.accent, fontSize: 11 }}>↑</span>
+                        <span style={{ color: COLORS.textPrimary, flex: 1 }}>{s.inName}</span>
+                        {s.minute != null && <span style={{ color: COLORS.textMuted, fontSize: 10 }}>{s.minute}'</span>}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ color: COLORS.red, fontSize: 11 }}>↓</span>
+                        <span style={{ color: COLORS.textSecondary, flex: 1 }}>{s.outName}</span>
+                      </div>
+                    </div>; })}
+                </div>}
+                {blk.lu.bench && blk.lu.bench.length > 0 && <div>
+                  <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>{t.bench}</div>
+                  {blk.lu.bench.map(function(p, i){
+                    return <div key={i} style={{ color: COLORS.textSecondary, fontSize: 11, padding: "3px 0", display: "flex", gap: 7, alignItems: "center" }}>
+                      <span style={{ color: COLORS.textMuted, fontSize: 10, width: 18, textAlign: "right" }}>{p.shirt != null ? p.shirt : ""}</span>
+                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                      {ratingById[p.id] != null && <RatingBadge rating={ratingById[p.id]} style={{ minWidth: 0, padding: "0px 4px", fontSize: 10 }} />}</div>; })}
+                </div>}
+              </div>;
+            })()}</CascadeItem>
 
             {detail.injuries && detail.injuries.length > 0 && <CascadeItem index={2}>
               <div style={{ marginTop: 16 }}>
@@ -1563,7 +1564,7 @@ function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
 // World Cup uses a custom local logo (wc_logo.png in /public); everyone else uses the api-sports logo.
 // Dark-mode white logo overrides for leagues whose official logo is dark/black (invisible on black).
 // Drop the PNGs in /public; until then the <img> onError falls back to the api-sports logo.
-var LEAGUE_LOGO_WHITE = { 2: "/ucl-white.png", 3: "/uel-white.png", 848: "/conf-white.png" };
+var LEAGUE_LOGO_WHITE = { 39: "/pl-white.png", 2: "/ucl-white.PNG", 3: "/uel-white.PNG", 848: "/conf-white.png" };
 function leagueLogo(id, fallback) {
   if (String(id) === "1") return "/wc_logo.png";
   if (CURRENT_THEME === "dark" && LEAGUE_LOGO_WHITE[id]) return LEAGUE_LOGO_WHITE[id];
@@ -1628,29 +1629,6 @@ function useImageColor(src) {
   return color;
 }
 
-// League detail header card: logo + name, with a faint light sweep tinted to the logo's color.
-function LeagueHeader({ league, onClear }) {
-  var logo = leagueLogo(league.id, league.logo);
-  var imgCol = useImageColor(logo);
-  var glow = LEAGUE_GLOW[league.id] || imgCol || COLORS.accent;
-  return <div style={{ position: "relative", overflow: "hidden", display: "flex", alignItems: "center", gap: 14, marginBottom: 18, padding: 16,
-    background: COLORS.card, borderRadius: 22, border: "none",
-    animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
-    {/* static tube-light glow in the league color (no movement) */}
-    <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.22,
-      background: "linear-gradient(100deg, " + glow + " 0%, " + glow + " 12%, transparent 58%)" }} />
-    {logo ? <img src={logo} onError={logoFallback(league.logo)} alt="" style={{ width: 56, height: 56, objectFit: "contain", flexShrink: 0, position: "relative" }} />
-      : <span style={{ width: 56, height: 56, borderRadius: 14, background: COLORS.cardAlt, flexShrink: 0, position: "relative" }} />}
-    <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-      <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800,
-        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{league.name}</div>
-    </div>
-    <button onClick={onClear} aria-label="clear" style={{ width: 30, height: 30, borderRadius: 10, border: "none",
-      background: COLORS.cardAlt, color: COLORS.textSecondary, cursor: "pointer", fontSize: 16, lineHeight: 1, display: "flex",
-      alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", WebkitTapHighlightColor: "transparent" }}>×</button>
-  </div>;
-}
-
 // Right-column league detail: big logo + fixtures, past matches, standings, top scorers.
 function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, onClear }) {
   var [standings, setStandings] = useState(null);
@@ -1673,6 +1651,11 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
     return function(){ cancelled = true; };
   }, [league.id]);
 
+  // banner logo + tube-light color for the league header
+  var bannerLogo = leagueLogo(league.id, league.logo);
+  var bannerCol = useImageColor(bannerLogo);
+  var glow = LEAGUE_GLOW[league.id] || bannerCol || COLORS.accent;
+
   var upcoming = (matches || []).filter(function(m){ return m.status === "upcoming" || m.status === "live"; });
   var past = (matches || []).filter(function(m){ return m.status === "finished"; });
   var group0 = (standings && standings.length) ? standings[0] : null;
@@ -1684,17 +1667,37 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
   }
 
   return <div style={{ minWidth: 0, animation: "moFade 0.26s ease both" }}>
-    <LeagueHeader league={league} onClear={onClear} />
-
-    {/* horizontal section menu (like the sport tabs) */}
-    <div className="mo-scroll" style={{ display: "flex", gap: 4, marginBottom: 14, overflowX: "auto" }}>
-      {[{ id: "standing", label: t.standing }, { id: "scorers", label: t.scorers },
-        { id: "fixtures", label: t.fixturesLabel }, { id: "past", label: t.pastMatches }].map(function(tb){
-        var a = tab === tb.id;
-        return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ flexShrink: 0, padding: "8px 14px",
-          border: "none", borderRadius: 12, fontSize: 12, fontWeight: a ? 700 : 600, cursor: "pointer",
-          background: a ? COLORS.accentDim : "transparent", color: a ? COLORS.accent : COLORS.textSecondary,
-          transition: "all 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>{tb.label}</button>; })}
+    {/* full-bleed banner: logo + name + section tabs; league-color tube-light fills it and fades downward to the tabs (no box) */}
+    <div style={{ position: "relative", overflow: "hidden", borderTopLeftRadius: 20, borderTopRightRadius: 20,
+      padding: "18px 16px 44px", marginBottom: 16, animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
+      {/* soft tube-light: a blurred glow source up top, diffusing down — fully fades (transparent) before the
+          bottom edge so overflow:hidden never clips a hard line; the extra bottom padding gives the fade room */}
+      <span aria-hidden style={{ position: "absolute", left: -30, right: -30, top: -36, bottom: 0, pointerEvents: "none", opacity: 0.62,
+        filter: "blur(40px)", WebkitFilter: "blur(40px)",
+        background: "linear-gradient(180deg, " + glow + " 0%, " + glow + " 14%, transparent 66%)" }} />
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+        {bannerLogo ? <img src={bannerLogo} onError={logoFallback(league.logo)} alt="" style={{ width: 58, height: 58, objectFit: "contain", flexShrink: 0 }} />
+          : <span style={{ width: 58, height: 58, borderRadius: 14, background: COLORS.cardAlt, flexShrink: 0 }} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: COLORS.textPrimary, fontSize: 21, fontWeight: 800,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{league.name}</div>
+        </div>
+        <button onClick={onClear} aria-label="kapat" style={{ width: 32, height: 32, borderRadius: 10, border: "none",
+          background: "rgba(0,0,0,0.28)", color: COLORS.textPrimary, cursor: "pointer", display: "flex",
+          alignItems: "center", justifyContent: "center", flexShrink: 0, WebkitTapHighlightColor: "transparent" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+      </div>
+      {/* section tabs sit inside the banner so the tube-light reaches them */}
+      <div className="mo-scroll" style={{ position: "relative", display: "flex", gap: 4, overflowX: "auto" }}>
+        {[{ id: "standing", label: t.standing }, { id: "scorers", label: t.scorers },
+          { id: "fixtures", label: t.fixturesLabel }, { id: "past", label: t.pastMatches }].map(function(tb){
+          var a = tab === tb.id;
+          return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ flexShrink: 0, padding: "8px 14px",
+            border: "none", borderRadius: 12, fontSize: 12, fontWeight: a ? 700 : 600, cursor: "pointer",
+            background: a ? COLORS.accentDim : "rgba(0,0,0,0.18)", color: a ? COLORS.accent : COLORS.textPrimary,
+            transition: "all 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>{tb.label}</button>; })}
+      </div>
     </div>
 
     <SlidePanel slideKey={tab} dir={0}>
