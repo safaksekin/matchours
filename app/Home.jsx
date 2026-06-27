@@ -32,18 +32,20 @@ const THEME_VARS = {
     "--modalBorder": "rgba(255,255,255,0.6)",
   },
   dark: {
-    "--bg": "#0D1130", "--card": "#151A3C", "--cardAlt": "#20243A",
-    "--border": "#2B3363", "--accent": "#4D51EA", "--accentDim": "rgba(77,81,234,0.18)",
-    "--teal": "#2A3050", "--mint": "#1B2036",
+    "--bg": "#000000", "--card": "#0E0E0E", "--cardAlt": "#181818",
+    "--border": "#2A2A2A", "--accent": "#4D51EA", "--accentDim": "rgba(77,81,234,0.18)",
+    "--teal": "#181818", "--mint": "#101010",
     "--purple": "#3FD176", "--purpleDim": "rgba(63,209,118,0.18)",
     "--textPrimary": "#E8EAFB", "--textSecondary": "#A8AECE", "--textMuted": "#767C9E",
     "--red": "#FF0000", "--yellow": "#F8DE22",
-    "--modalGrad": "linear-gradient(180deg, rgba(21,26,60,0.90), rgba(13,17,48,0.95))",
+    "--modalGrad": "linear-gradient(180deg, rgba(18,18,18,0.92), rgba(0,0,0,0.96))",
     "--modalBorder": "rgba(255,255,255,0.08)",
   },
 };
 
+var CURRENT_THEME = "dark"; // tracked so logo helpers can pick dark-friendly (white) league logos
 function applyTheme(theme) {
+  CURRENT_THEME = theme;
   if (typeof document === "undefined") return;
   var vars = THEME_VARS[theme] || THEME_VARS.light;
   var root = document.documentElement;
@@ -801,9 +803,15 @@ function PlayerMatchSheet({ player, matchId, t, onClose }) {
     var ov = overlayRef.current;
     function block(e){ if (e.target === ov) e.preventDefault(); }
     if (ov) { ov.addEventListener("wheel", block, { passive: false }); ov.addEventListener("touchmove", block, { passive: false }); }
+    // freeze the match-detail scroller behind us so it can't scroll/move while the sheet is open
+    // (scrollbars are CSS-hidden, so overflow:hidden causes no width shift)
+    var scroller = ov ? ov.closest(".mo-scroll") : null;
+    var prevOv = scroller ? scroller.style.overflow : "";
+    if (scroller) scroller.style.overflow = "hidden";
     return function(){
       cancelAnimationFrame(r); window.removeEventListener("keydown", onKey);
       if (ov) { ov.removeEventListener("wheel", block); ov.removeEventListener("touchmove", block); }
+      if (scroller) scroller.style.overflow = prevOv;
     };
   }, []);
   function close(){ setVisible(false); setTimeout(onClose, 280); }
@@ -825,12 +833,12 @@ function PlayerMatchSheet({ player, matchId, t, onClose }) {
   return <div ref={overlayRef} onClick={close}
     onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
     style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex",
-    alignItems: "flex-end", justifyContent: "center", touchAction: "none",
+    alignItems: "flex-end", justifyContent: "center",
     background: visible ? "rgba(20,35,35,0.5)" : "rgba(20,35,35,0)", transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} {...drag.handlers} style={{ width: "100%", maxWidth: 480, background: "var(--modalGrad)",
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
       borderTopLeftRadius: 24, borderTopRightRadius: 24, border: "1px solid var(--modalBorder)", borderBottom: "none",
-      padding: "12px 20px max(24px, env(safe-area-inset-bottom))", fontFamily: FONT,
+      padding: "12px 20px max(24px, env(safe-area-inset-bottom))", fontFamily: FONT, touchAction: "pan-y",
       maxHeight: "90vh", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)", boxShadow: "0 -8px 40px rgba(20,40,40,0.22)" }}>
@@ -1541,7 +1549,7 @@ function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
                   return <button key={l.id} onClick={function(){ onSelect(l); }}
                     style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "8px 14px 8px 30px", border: "none",
                       background: sel ? COLORS.accentDim : "transparent", cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-                    {leagueLogo(l.id, l.logo) ? <img src={leagueLogo(l.id, l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />
+                    {leagueLogo(l.id, l.logo) ? <img src={leagueLogo(l.id, l.logo)} onError={logoFallback(l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />
                       : <span style={{ width: 16, height: 16, borderRadius: 4, background: COLORS.cardAlt, flexShrink: 0 }} />}
                     <span style={{ flex: 1, textAlign: "left", color: sel ? COLORS.accent : COLORS.textSecondary, fontSize: 12,
                       fontWeight: sel ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</span>
@@ -1553,7 +1561,18 @@ function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
 }
 
 // World Cup uses a custom local logo (wc_logo.png in /public); everyone else uses the api-sports logo.
-function leagueLogo(id, fallback) { return String(id) === "1" ? "/wc_logo.png" : (fallback || null); }
+// Dark-mode white logo overrides for leagues whose official logo is dark/black (invisible on black).
+// Drop the PNGs in /public; until then the <img> onError falls back to the api-sports logo.
+var LEAGUE_LOGO_WHITE = { 2: "/ucl-white.png", 3: "/uel-white.png", 848: "/conf-white.png" };
+function leagueLogo(id, fallback) {
+  if (String(id) === "1") return "/wc_logo.png";
+  if (CURRENT_THEME === "dark" && LEAGUE_LOGO_WHITE[id]) return LEAGUE_LOGO_WHITE[id];
+  return fallback || null;
+}
+// onError handler: if a white-override file is missing, fall back to the original api-sports logo once.
+function logoFallback(orig) {
+  return function(e){ if (e.currentTarget.src.indexOf(orig) === -1) { e.currentTarget.onerror = null; e.currentTarget.src = orig; } };
+}
 
 // Per-league tube-light glow color (by api-sports league id). Unlisted leagues fall back to the logo's own color.
 var LEAGUE_GLOW = {
@@ -1620,7 +1639,7 @@ function LeagueHeader({ league, onClear }) {
     {/* static tube-light glow in the league color (no movement) */}
     <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.22,
       background: "linear-gradient(100deg, " + glow + " 0%, " + glow + " 12%, transparent 58%)" }} />
-    {logo ? <img src={logo} alt="" style={{ width: 56, height: 56, objectFit: "contain", flexShrink: 0, position: "relative" }} />
+    {logo ? <img src={logo} onError={logoFallback(league.logo)} alt="" style={{ width: 56, height: 56, objectFit: "contain", flexShrink: 0, position: "relative" }} />
       : <span style={{ width: 56, height: 56, borderRadius: 14, background: COLORS.cardAlt, flexShrink: 0, position: "relative" }} />}
     <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
       <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800,
@@ -1866,7 +1885,7 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
     {leagues.map(function(l){
       var a = selectedId === l.id;
       return <button key={l.id} onClick={function(){ onSelect(l); }} style={chip(a)}>
-        {leagueLogo(l.id, l.logo) && <img src={leagueLogo(l.id, l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />}
+        {leagueLogo(l.id, l.logo) && <img src={leagueLogo(l.id, l.logo)} onError={logoFallback(l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />}
         <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</span>
       </button>; })}
   </div>;
