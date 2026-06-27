@@ -2090,7 +2090,7 @@ function MatchModal({ match, isF1, t, onClose }) {
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{locTeam(match.home, t)}</span></div>
             <div style={{ minWidth: 66, textAlign: "center", padding: "7px 12px", borderRadius: 14, flexShrink: 0,
               background: showScore ? COLORS.accentDim : COLORS.cardAlt }}>
-              {showScore ? <span style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800 }}>{match.score}</span>
+              {showScore ? <span style={{ color: CURRENT_THEME === "dark" ? "#fff" : COLORS.accent, fontSize: 22, fontWeight: 800 }}>{match.score}</span>
                : <span style={{ color: COLORS.textSecondary, fontSize: 15, fontWeight: 700 }}>{match.time}</span>}</div>
             <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, justifyContent: "flex-end", minWidth: 0 }}>
               <span className="mo-team-name" style={{ color: COLORS.textPrimary, fontWeight: 800, textAlign: "right",
@@ -2504,11 +2504,11 @@ function LangSwitch({ lang, setLang }) {
   </div>;
 }
 
-// Logo slot top-left: theme-aware (logo1_dark.PNG in dark mode); clickable -> home. Falls back to wordmark.
+// Logo slot top-left: theme-aware (logo_dark.PNG in dark, logo_light.PNG in light); clickable -> home. Falls back to wordmark.
 function Logo({ theme, onHome }) {
   var [ok, setOk] = useState(true);
   useEffect(function(){ setOk(true); }, [theme]); // re-try image when theme (src) changes
-  var src = theme === "dark" ? "/logo1_dark.PNG" : "/logo1.PNG";
+  var src = theme === "dark" ? "/logo_dark.PNG" : "/logo_light.PNG";
   return <div onClick={onHome} role="button" aria-label="home"
     style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
     {ok && <img key={theme} src={src} alt="matchours" onError={function(){ setOk(false); }}
@@ -2628,7 +2628,7 @@ function LoginScreen({ t, lang, setLang, theme }) {
     alignItems: "center", justifyContent: "center", padding: 24, fontFamily: FONT, position: "relative" }}>
     <div style={{ marginBottom: 40, textAlign: "center" }}>
       {logoOk
-        ? <img key={theme} src={theme === "dark" ? "/logo1_dark.PNG" : "/logo1.PNG"} alt="fikstür.com"
+        ? <img key={theme} src={theme === "dark" ? "/logo_dark.PNG" : "/logo_light.PNG"} alt="fikstür.com"
             onError={function(){ setLogoOk(false); }}
             style={{ height: 62, width: "auto", objectFit: "contain", margin: "0 auto", display: "block" }} />
         : <h1 style={{ color: COLORS.textPrimary, fontSize: 32, fontWeight: 800, margin: 0, letterSpacing: "-1px", fontFamily: FONT }}>
