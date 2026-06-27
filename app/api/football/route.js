@@ -41,14 +41,30 @@ function leagueTierKey(l) {
 }
 
 // Cache successful API-Football responses at the Cloudflare edge (keyed by URL) so repeated
-// navigation doesn't re-hit api-sports and blow the free-plan rate limit. Only 200s are cached.
+// navigation doesn't re-hit api-sports and blow the rate limit. Only 200s are cached.
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// In-memory fallback used when the Cloudflare edge cache isn't available — chiefly `npm run dev`
+// (Node has no `caches.default`) and React's dev double-render. Stops the dev server from re-hitting
+// api-sports on every refresh / effect re-run, which is what burns the quota while building.
+const memCache = new Map(); // url -> { exp, data }
+function memGet(url) {
+  const hit = memCache.get(url);
+  if (hit && hit.exp > Date.now()) return hit.data;
+  if (hit) memCache.delete(url);
+  return undefined; // miss (cached responses are only ever stored when truthy)
+}
+function memSet(url, data, ttl) {
+  if (memCache.size > 600) memCache.delete(memCache.keys().next().value); // simple LRU-ish cap
+  memCache.set(url, { exp: Date.now() + ttl * 1000, data: data });
+}
 
 async function apiGet(path, revalidate, _retried) {
   const ttl = revalidate || 60;
   const url = HOST + path;
   const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
   const key = edge ? new Request(url, { method: "GET" }) : null;
+  if (!edge) { const m = memGet(url); if (m !== undefined) return m; } // dev cache hit
   try {
     if (edge) {
       const hit = await edge.match(key);
@@ -70,10 +86,14 @@ async function apiGet(path, revalidate, _retried) {
       return null;
     }
     const resp = (j && j.response) ? j.response : null;
-    if (edge && resp) {
-      await edge.put(key, new Response(text, {
-        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl },
-      }));
+    if (resp) {
+      if (edge) {
+        await edge.put(key, new Response(text, {
+          headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl },
+        }));
+      } else {
+        memSet(url, resp, ttl); // dev / no-edge: remember in RAM so refreshes don't re-hit the API
+      }
     }
     return resp;
   } catch (e) { return null; }
@@ -250,7 +270,10 @@ export async function GET(request) {
         const p = x.p;
         return {
           id: p.id,
-          name: p.name || ((p.firstname || "") + " " + (p.lastname || "")).trim(),
+          // prefer the full "Arda Güler" over the abbreviated "A. Güler" the API returns in `name`
+          name: (p.firstname && p.lastname && p.firstname.length > 2 && p.firstname.indexOf(".") === -1)
+            ? (p.firstname + " " + p.lastname)
+            : (p.name || ((p.firstname || "") + " " + (p.lastname || "")).trim()),
           photo: p.photo || null,
           age: p.age != null ? p.age : null,
           nationality: p.nationality || null,
@@ -290,18 +313,24 @@ export async function GET(request) {
     const mapTeam = function (tt) { return { id: tt.id, name: tt.name, logo: tt.logo, country: tt.country || null }; };
 
     const teamFull = await apiGet("/teams?search=" + encodeURIComponent(q), 3600);
-    // single-team query = a team whose name contains the WHOLE query
-    let single = null;
+    // rank every matching team so partial queries surface suggestions ("milan" -> Milan; "real" -> Real Madrid/Sociedad/Betis...)
+    const teamRanked = [];
     (teamFull || []).forEach(function (it) {
       const tt = it.team || {};
       const nm = searchSafe(tt.name || "").toLowerCase();
-      if (nm && nm.indexOf(ql) >= 0) {
-        let s = (nm === ql ? 2 : 1);
-        if (isVariant(tt.name)) s -= 2;
-        if (single === null || s > single.s) single = { t: tt, s: s };
-      }
+      if (!nm) return;
+      let s = 0;
+      if (nm === ql || nm.indexOf(ql) === 0) s = 3; // exact OR starts-with (id breaks ties -> well-known clubs first)
+      else if (nm.indexOf(ql) >= 0) s = 2;          // contains the query
+      else if (ql.indexOf(nm) >= 0) s = 1;          // query contains the name
+      if (s <= 0) return;
+      if (isVariant(tt.name)) s -= 2;
+      if (s > 0) teamRanked.push({ t: tt, s: s });
     });
-    single = (single && single.s > 0) ? single.t : null;
+    teamRanked.sort(function (a, b) { if (b.s !== a.s) return b.s - a.s; return (a.t.id || 0) - (b.t.id || 0); });
+    const topTeams = teamRanked.slice(0, 6).map(function (x) { return x.t; });
+    // enter single-team mode (and skip H2H) only when the top match is strong (contains / prefix / exact)
+    let single = (teamRanked.length && teamRanked[0].s >= 2) ? teamRanked[0].t : null;
 
     const teamsOut = [];
     const matchesOut = [];
@@ -315,7 +344,7 @@ export async function GET(request) {
     };
 
     if (single) {
-      teamsOut.push(mapTeam(single));
+      topTeams.forEach(function (tt) { teamsOut.push(mapTeam(tt)); });
       const up = await apiGet("/fixtures?team=" + single.id + "&next=6", 120);
       const re = await apiGet("/fixtures?team=" + single.id + "&last=6", 300);
       [].concat(up || [], re || []).forEach(pushFx);

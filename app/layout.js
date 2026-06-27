@@ -1,7 +1,10 @@
 // app/layout.js
+import { SITE_URL } from "./_lib/routes";
+
 export const metadata = {
-  title: "matchours",
-  description: "Tum spor istatistikleri, tek ekranda.",
+  metadataBase: new URL(SITE_URL),
+  title: "fikstür.com — Tüm Spor İstatistikleri, Canlı Skorlar ve Fikstür",
+  description: "Futbol, basketbol, voleybol ve daha fazlası: canlı skorlar, fikstür, puan durumu, gol krallığı ve maç istatistikleri tek ekranda.",
 };
 
 // viewport-fit=cover lets env(safe-area-inset-*) work on iOS notch devices.
