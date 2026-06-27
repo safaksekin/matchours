@@ -1566,7 +1566,7 @@ function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
 // World Cup uses a custom local logo (wc_logo.png in /public); everyone else uses the api-sports logo.
 // Dark-mode white logo overrides for leagues whose official logo is dark/black (invisible on black).
 // Drop the PNGs in /public; until then the <img> onError falls back to the api-sports logo.
-var LEAGUE_LOGO_WHITE = { 39: "/pl-white.png", 2: "/ucl-white.PNG", 3: "/uel-white.PNG", 848: "/conf-white.png" };
+var LEAGUE_LOGO_WHITE = { 39: "/pl-white.PNG", 2: "/ucl-white.PNG", 3: "/uel-white.PNG", 848: "/conf-white.png" };
 function leagueLogo(id, fallback) {
   if (String(id) === "1") return "/wc_logo.png";
   if (CURRENT_THEME === "dark" && LEAGUE_LOGO_WHITE[id]) return LEAGUE_LOGO_WHITE[id];
