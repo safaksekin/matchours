@@ -1159,11 +1159,13 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading }) {
        : scorers.map(function(sc, i){ return <div key={i} style={{ display: "flex", alignItems: "center", gap: 10,
           padding: "9px 12px", marginBottom: 6, background: COLORS.card, borderRadius: 12, border: "none" }}>
           <span style={{ width: 24, height: 24, borderRadius: 7, background: COLORS.accentDim, color: COLORS.accent,
-            fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i+1}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700 }}>{sc.name}</div>
+            fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i+1}</span>
+          {sc.photo ? <img src={sc.photo} alt="" style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+            : <span style={{ width: 30, height: 30, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0 }} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sc.name}</div>
             <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{sc.team}</div></div>
-          <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800 }}>{sc.goals}</span>
+          <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{sc.goals}</span>
         </div>; })}
     </div>}
 
@@ -1235,8 +1237,8 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading }) {
                   <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>{t.bench}</div>
                   {blk.lu.bench.map(function(p, i){
                     return <div key={i} style={{ color: COLORS.textSecondary, fontSize: 11, padding: "3px 0", display: "flex", gap: 7, alignItems: "center" }}>
-                      <span style={{ color: COLORS.textMuted, fontSize: 10, width: 18, textAlign: "right" }}>{p.shirt != null ? p.shirt : ""}</span>
-                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                      <span style={{ color: COLORS.textMuted, fontSize: 10, width: 18, textAlign: "right", flexShrink: 0 }}>{p.shirt != null ? p.shirt : ""}</span>
+                      <span style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                       {ratingById[p.id] != null && <RatingBadge rating={ratingById[p.id]} style={{ minWidth: 0, padding: "0px 4px", fontSize: 10 }} />}</div>; })}
                 </div>}
               </div>;
@@ -1669,12 +1671,12 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
   return <div style={{ minWidth: 0, animation: "moFade 0.26s ease both" }}>
     {/* full-bleed banner: logo + name + section tabs; league-color tube-light fills it and fades downward to the tabs (no box) */}
     <div style={{ position: "relative", overflow: "hidden", borderTopLeftRadius: 20, borderTopRightRadius: 20,
-      padding: "18px 16px 44px", marginBottom: 16, animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
+      padding: "18px 16px 14px", marginBottom: 8, animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
       {/* soft tube-light: a blurred glow source up top, diffusing down — fully fades (transparent) before the
-          bottom edge so overflow:hidden never clips a hard line; the extra bottom padding gives the fade room */}
+          bottom edge so overflow:hidden never clips a hard line */}
       <span aria-hidden style={{ position: "absolute", left: -30, right: -30, top: -36, bottom: 0, pointerEvents: "none", opacity: 0.62,
-        filter: "blur(40px)", WebkitFilter: "blur(40px)",
-        background: "linear-gradient(180deg, " + glow + " 0%, " + glow + " 14%, transparent 66%)" }} />
+        filter: "blur(34px)", WebkitFilter: "blur(34px)",
+        background: "linear-gradient(180deg, " + glow + " 0%, " + glow + " 14%, transparent 58%)" }} />
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
         {bannerLogo ? <img src={bannerLogo} onError={logoFallback(league.logo)} alt="" style={{ width: 58, height: 58, objectFit: "contain", flexShrink: 0 }} />
           : <span style={{ width: 58, height: 58, borderRadius: 14, background: COLORS.cardAlt, flexShrink: 0 }} />}
@@ -3118,7 +3120,7 @@ export default function Home({ initialSport, initialLeagueSlug }) {
                 {/* RIGHT: league detail panel (if a league is picked) or the default list */}
                 <div className="mo-col-right">
                   {usingLeague
-                    ? <LeagueDetailPanel key={selectedLeague.id} league={selectedLeague} matches={leagueMatches} matchesLoading={leagueMatchesLoading}
+                    ? <LeagueDetailPanel league={selectedLeague} matches={leagueMatches} matchesLoading={leagueMatchesLoading}
                         t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} onClear={clearLeague} />
                     : <DayMatchList matches={shown} t={t} isF1={isF1} onOpen={function(m){ setSelectedMatch(m); }} />}
                 </div>
