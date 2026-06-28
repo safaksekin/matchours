@@ -3,7 +3,56 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
 import { supabase } from "./lib/supabaseClient";
-import { fetchMyRating, saveRating, fetchComments, addComment as dbAddComment, fetchCommunityFeed } from "./lib/db";
+import { fetchMyRating, saveRating, fetchComments, addComment as dbAddComment, fetchCommunityFeed,
+  fetchFavorites, addFavorite, removeFavorite } from "./lib/db";
+
+// ── Favorites: a tiny module-level store so the save button works everywhere
+// (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
+var FAV = { map: {}, loaded: false, listeners: new Set(), loggedIn: false, onNeedLogin: null };
+function favKey(kind, id) { return kind + ":" + String(id); }
+function favHas(kind, id) { return !!FAV.map[favKey(kind, id)]; }
+function favEmit() { FAV.listeners.forEach(function (fn) { fn(); }); }
+function favLoad() {
+  fetchFavorites().then(function (rows) {
+    var m = {}; (rows || []).forEach(function (r) { m[favKey(r.kind, r.ref_id)] = r; });
+    FAV.map = m; FAV.loaded = true; favEmit();
+  }).catch(function () {});
+}
+function favToggle(kind, id, name, image, meta) {
+  if (!FAV.loggedIn) { if (FAV.onNeedLogin) FAV.onNeedLogin(); return; }
+  var k = favKey(kind, id);
+  var next = Object.assign({}, FAV.map);
+  if (next[k]) { delete next[k]; FAV.map = next; favEmit(); removeFavorite(kind, id); }
+  else {
+    next[k] = { kind: kind, ref_id: String(id), name: name || null, image: image || null, meta: meta || null };
+    FAV.map = next; favEmit(); addFavorite(next[k]);
+  }
+}
+// subscribe a component to favorite changes
+function useFavorites() {
+  var [, force] = useState(0);
+  useEffect(function () {
+    var fn = function () { force(function (x) { return x + 1; }); };
+    FAV.listeners.add(fn); return function () { FAV.listeners.delete(fn); };
+  }, []);
+  return FAV;
+}
+
+// Instagram-style save button (bookmark, no text); fills with accent purple when saved.
+function FavButton({ kind, refId, name, image, meta, size }) {
+  useFavorites();
+  var on = favHas(kind, refId);
+  var s = size || 32;
+  return <button onClick={function (e) { e.stopPropagation(); favToggle(kind, refId, name, image, meta); }}
+    aria-label="favori" style={{ width: s, height: s, borderRadius: 9, border: "none", background: "transparent",
+      cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      color: on ? COLORS.accent : COLORS.textMuted, WebkitTapHighlightColor: "transparent" }}>
+    <svg width={Math.round(s * 0.56)} height={Math.round(s * 0.56)} viewBox="0 0 24 24"
+      fill={on ? COLORS.accent : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
+    </svg>
+  </button>;
+}
 
 // Minimal match snapshot stored with a comment so the feed can render a quote card AND re-open the match.
 function matchSnap(m) {
@@ -932,6 +981,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
           <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{t.pmTitle}</div>
         </div>
         {p.rating != null && <RatingBadge rating={p.rating} style={{ fontSize: 13, padding: "3px 8px", minWidth: 40 }} />}
+        {p.id != null && <FavButton kind="player" refId={p.id} name={p.name} image={p.photo} size={34} />}
       </div>
       <div>
         {rows.map(function(r, i){
@@ -2319,8 +2369,8 @@ function PlayerRow({ player, t, onOpen }) {
       <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {[player.position, player.nationality].filter(Boolean).join(" · ")}</div>
     </div>
-    <span style={{ color: hover ? COLORS.accent : COLORS.textMuted, fontSize: 18, fontWeight: 700,
-      transition: "color 0.3s ease", flexShrink: 0 }}>›</span>
+    <FavButton kind="player" refId={player.id} name={player.name} image={player.photo}
+      meta={{ position: player.position || null, nationality: player.nationality || null }} />
   </div>;
 }
 
@@ -2337,8 +2387,7 @@ function TeamRow({ team, t, onOpen }) {
         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(team.name, t)}</div>
       {team.country && <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{team.country}</div>}
     </div>
-    <span style={{ color: hover ? COLORS.accent : COLORS.textMuted, fontSize: 18, fontWeight: 700,
-      transition: "color 0.3s ease", flexShrink: 0 }}>›</span>
+    <FavButton kind="team" refId={team.id} name={team.name} image={team.logo} meta={{ country: team.country || null }} />
   </div>;
 }
 
@@ -2435,10 +2484,13 @@ function PlayerModal({ player, t, onClose }) {
         borderBottom: "1px solid rgba(77,81,234,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>{t.plProfile}</span>
-          <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
-            border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
-            fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
-            WebkitTapHighlightColor: "transparent" }}>×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {player && player.id != null && <FavButton kind="player" refId={player.id} name={name} image={photo} size={34} />}
+            <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
+              border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
+              fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              WebkitTapHighlightColor: "transparent" }}>×</button>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {photo
@@ -2579,10 +2631,13 @@ function TeamModal({ team, t, onClose, onOpenMatch }) {
         borderBottom: "1px solid rgba(77,81,234,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>{t.tmProfile}</span>
-          <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
-            border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
-            fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
-            WebkitTapHighlightColor: "transparent" }}>×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {team && team.id != null && <FavButton kind="team" refId={team.id} name={name} image={logo} size={34} />}
+            <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
+              border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
+              fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              WebkitTapHighlightColor: "transparent" }}>×</button>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <TeamLogo src={logo} name={name} size={58} />
@@ -2691,13 +2746,14 @@ function SimplePage({ title, onBack, t, children }) {
   </div>;
 }
 
-function ProfilePage({ onBack, onLogout, session, t, lang, setLang }) {
+function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
+  useFavorites();
+  var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
   var userEmail = (session && session.user && session.user.email) || "";
   var displayName = userEmail ? userEmail.split("@")[0] : "user";
   var initial = displayName ? displayName[0].toUpperCase() : "U";
   var stats = [{ label: t.followedMatches, val: "147" }, { label: t.commentsCount, val: "38" },
     { label: t.favLeague, val: "Super Lig" }, { label: t.membership, val: lang === "de" ? "Jan. 2024" : "Ocak 2024" }];
-  var favTeams = ["Galatasaray", "Real Madrid", "Lakers"];
   var act = { tr: ["Galatasaray - Fenerbahce takip edildi", "El Clasico'ya yorum yapildi", "Wimbledon favoriledi"],
     en: ["Followed Galatasaray - Fenerbahce", "Commented on El Clasico", "Favorited Wimbledon"],
     de: ["Galatasaray - Fenerbahce verfolgt", "El Clasico kommentiert", "Wimbledon favorisiert"] };
@@ -2731,11 +2787,22 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang }) {
         <div style={{ marginBottom: 22 }}>
           <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.6px", marginBottom: 10 }}>{t.favTeams}</div>
-          {favTeams.map(function(tm, i){ return <div key={i} style={{ display: "flex", alignItems: "center", gap: 12,
-            padding: "12px 14px", marginBottom: 7, background: COLORS.card, borderRadius: 16, border: "none" }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.accentDim, display: "flex",
-              alignItems: "center", justifyContent: "center", color: COLORS.accent, fontSize: 13, fontWeight: 800 }}>{tm[0]}</div>
-            <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 700 }}>{tm}</span></div>; })}</div>
+          {favRecs.length === 0
+            ? <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "6px 2px" }}>Henüz favori yok.</div>
+            : favRecs.map(function(r){ return <div key={r.kind + r.ref_id}
+                onClick={function(){ if (r.kind === "team" && onOpenTeam) onOpenTeam(r); else if (r.kind === "player" && onOpenPlayer) onOpenPlayer(r); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 7,
+                  background: COLORS.card, borderRadius: 16, border: "none", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                {r.kind === "team"
+                  ? <TeamLogo src={r.image} name={r.name} size={34} />
+                  : (r.image
+                      ? <img src={r.image} alt="" style={{ width: 34, height: 34, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
+                      : <span style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
+                          alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13, fontWeight: 800 }}>{(r.name || "?")[0]}</span>)}
+                <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 14, fontWeight: 700,
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(r.name, t)}</span>
+                <span style={{ color: COLORS.textMuted, fontSize: 11, flexShrink: 0 }}>{r.kind === "team" ? "Takım" : "Oyuncu"}</span>
+              </div>; })}</div>
         <div>
           <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.6px", marginBottom: 10 }}>{t.recentActivity}</div>
@@ -3047,6 +3114,52 @@ function CommunityPage({ onBack, t, onOpenMatch }) {
   </SimplePage>;
 }
 
+// One saved team/player row in the Favorites page.
+function FavoriteRow({ rec, onOpen }) {
+  var sub = rec.meta && (rec.meta.position || rec.meta.country);
+  return <div onClick={onOpen} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 6px",
+    borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+    {rec.kind === "team"
+      ? <TeamLogo src={rec.image} name={rec.name} size={38} />
+      : (rec.image
+          ? <img src={rec.image} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
+          : <span style={{ width: 38, height: 38, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
+              alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 14, fontWeight: 700 }}>{(rec.name || "?")[0]}</span>)}
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rec.name || "?"}</div>
+      {sub && <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{sub}</div>}
+    </div>
+    <FavButton kind={rec.kind} refId={rec.ref_id} name={rec.name} image={rec.image} meta={rec.meta} />
+  </div>;
+}
+
+// Favorites page: saved teams + players, stacked.
+function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer }) {
+  useFavorites();
+  var recs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
+  var teams = recs.filter(function(r){ return r.kind === "team"; });
+  var players = recs.filter(function(r){ return r.kind === "player"; });
+  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 6px" };
+  return <SimplePage title="Favoriler" onBack={onBack} t={t}>
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      {!loggedIn
+        ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>
+            Favorilerini görmek için giriş yap.
+            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, color: "#fff",
+              border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>Oturum Aç</button></div>
+          </div>
+        : recs.length === 0
+          ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.</div>
+          : <div>
+              {teams.length > 0 && <div><div style={label}>Takımlar</div>
+                {teams.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} onOpen={function(){ onOpenTeam(r); }} />; })}</div>}
+              {players.length > 0 && <div><div style={label}>Oyuncular</div>
+                {players.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} onOpen={function(){ onOpenPlayer(r); }} />; })}</div>}
+            </div>}
+    </div>
+  </SimplePage>;
+}
+
 // Global CSS — rendered on EVERY screen (main + community/settings/etc.) so .mo-matchsheet,
 // .mo-scroll, .mo-sticky and the responsive rules apply even on the early-return pages.
 function AppStyles() {
@@ -3123,8 +3236,9 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   var [showLogin, setShowLogin] = useState(false); // login screen, opened from the header (app is browseable without login)
   var [showMenu, setShowMenu] = useState(false);    // hamburger drawer
   var [mobileSearch, setMobileSearch] = useState(false); // mobile: bottom-nav search input visible
-  var [comingSoon, setComingSoon] = useState(null);      // "Favoriler" placeholder page
+  var [comingSoon, setComingSoon] = useState(null);      // placeholder page (unused now)
   var [showCommunity, setShowCommunity] = useState(false); // community / forum feed
+  var [showFavorites, setShowFavorites] = useState(false); // favorites (teams & players)
   var [theme, setTheme] = useState("dark"); // default dark; overridden by saved pref on mount
 
   // load saved theme (or system preference) once, then apply on change
@@ -3144,6 +3258,12 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   var loggedIn = !!session;
   // once logged in, drop the login overlay (so logging out later doesn't force it back open)
   useEffect(function(){ if (loggedIn) setShowLogin(false); }, [loggedIn]);
+  // keep the favorites store in sync with auth (and load this user's saved teams/players)
+  useEffect(function(){
+    FAV.loggedIn = loggedIn;
+    FAV.onNeedLogin = function(){ setShowLogin(true); };
+    if (loggedIn) favLoad(); else { FAV.map = {}; FAV.loaded = false; favEmit(); }
+  }, [loggedIn]);
 
   // Track Supabase auth session
   useEffect(function(){
@@ -3167,16 +3287,16 @@ export default function Home({ initialSport, initialLeagueSlug }) {
     setShowProfile(false); setShowSettings(false); setShowNews(false);
     setQuery(""); setSelectedLeague(null);
     setSelectedMatch(null); setSelectedPlayer(null); setSelectedTeam(null);
-    setMobileSearch(false); setComingSoon(null); setShowCommunity(false);
+    setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false);
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {}
   }
   // mobile bottom-nav actions
   function onMobileNav(id) {
     if (id === "mac") { goHome(); }
-    else if (id === "arama") { setComingSoon(null); setShowProfile(false); setShowCommunity(false); setMobileSearch(true); }
-    else if (id === "topluluk") { setMobileSearch(false); setShowProfile(false); setComingSoon(null); setShowCommunity(true); }
-    else if (id === "favoriler") { setMobileSearch(false); setShowProfile(false); setShowCommunity(false); setComingSoon("Favoriler"); }
-    else if (id === "profil") { setMobileSearch(false); setComingSoon(null); setShowCommunity(false); if (loggedIn) setShowProfile(true); else setShowLogin(true); }
+    else if (id === "arama") { setComingSoon(null); setShowProfile(false); setShowCommunity(false); setShowFavorites(false); setMobileSearch(true); }
+    else if (id === "topluluk") { setMobileSearch(false); setShowProfile(false); setComingSoon(null); setShowFavorites(false); setShowCommunity(true); }
+    else if (id === "favoriler") { setMobileSearch(false); setShowProfile(false); setShowCommunity(false); setComingSoon(null); setShowFavorites(true); }
+    else if (id === "profil") { setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false); if (loggedIn) setShowProfile(true); else setShowLogin(true); }
   }
 
   function changeSport(id, el) {
@@ -3355,8 +3475,13 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   if (!authReady) return <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex",
     alignItems: "center", justifyContent: "center", color: COLORS.textSecondary, fontFamily: FONT, fontSize: 14 }}>{t.loading}</div>;
   if (showLogin && !loggedIn) return <LoginScreen onClose={function(){ setShowLogin(false); }} t={t} lang={lang} setLang={setLang} theme={theme} />;
-  if (showProfile) return <><ProfilePage onBack={function(){ setShowProfile(false); }} onLogout={logout} session={session} t={t} lang={lang} setLang={setLang} />
-    <MobileBottomNav active="profil" onSelect={onMobileNav} /></>;
+  if (showProfile) return <><AppStyles /><ProfilePage onBack={function(){ setShowProfile(false); }} onLogout={logout} session={session} t={t} lang={lang} setLang={setLang}
+      onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
+      onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }} />
+    <MobileBottomNav active="profil" onSelect={onMobileNav} />
+    {selectedTeam && <TeamModal team={selectedTeam} t={t} onClose={function(){ setSelectedTeam(null); }} onOpenMatch={function(m){ setSelectedMatch(m); }} />}
+    {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
+    {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
   if (showSettings) return <SimplePage title={t.settings} onBack={function(){ setShowSettings(false); }} t={t}>
     <div style={{ marginBottom: 22 }}>
       <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 10 }}>{t.appearance}</div>
@@ -3387,6 +3512,15 @@ export default function Home({ initialSport, initialLeagueSlug }) {
     <MobileBottomNav active="favoriler" onSelect={onMobileNav} /></>;
   if (showCommunity) return <><AppStyles /><CommunityPage onBack={function(){ setShowCommunity(false); }} t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} />
     <MobileBottomNav active="topluluk" onSelect={onMobileNav} />
+    {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
+  if (showFavorites) return <><AppStyles />
+    <FavoritesPage onBack={function(){ setShowFavorites(false); }} t={t} loggedIn={loggedIn}
+      onLogin={function(){ setShowLogin(true); }}
+      onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
+      onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }} />
+    <MobileBottomNav active="favoriler" onSelect={onMobileNav} />
+    {selectedTeam && <TeamModal team={selectedTeam} t={t} onClose={function(){ setSelectedTeam(null); }} onOpenMatch={function(m){ setSelectedMatch(m); }} />}
+    {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
 
   var matches = data[(activeSport === "live") ? "football" : activeSport] || [];
@@ -3428,6 +3562,15 @@ export default function Home({ initialSport, initialLeagueSlug }) {
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5" /><path d="M16.5 5.6a3 3 0 0 1 0 5.6M18.5 20c0-2-.7-3.6-2-4.6" /></svg>
                   Topluluk
+                </button>
+              </span>
+              {/* favorites (desktop only — mobile uses the bottom-nav "Favoriler") */}
+              <span className="mo-only-desktop">
+                <button onClick={function(){ setShowFavorites(true); }} aria-label="Favoriler" style={{ display: "flex", alignItems: "center", gap: 7,
+                  padding: "8px 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
+                  fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>
+                  Favoriler
                 </button>
               </span>
               {/* hamburger menu (settings, language, theme) */}

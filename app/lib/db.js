@@ -9,6 +9,30 @@ export async function getUserId() {
   } catch (e) { return null; }
 }
 
+// ── Favorites (teams & players) ─────────────────────────────────────────────
+export async function fetchFavorites() {
+  const uid = await getUserId();
+  if (!uid) return [];
+  const { data } = await supabase.from("favorites")
+    .select("kind, ref_id, name, image, meta, created_at")
+    .order("created_at", { ascending: false });
+  return data || [];
+}
+export async function addFavorite(f) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const { error } = await supabase.from("favorites").insert({
+    user_id: uid, kind: f.kind, ref_id: String(f.ref_id),
+    name: f.name || null, image: f.image || null, meta: f.meta || null,
+  });
+  return { error: error || null };
+}
+export async function removeFavorite(kind, refId) {
+  const uid = await getUserId();
+  if (!uid) return;
+  await supabase.from("favorites").delete().eq("user_id", uid).eq("kind", kind).eq("ref_id", String(refId));
+}
+
 // ── Ratings ───────────────────────────────────────────────────────────────
 // The current user's existing rating for a target (so the sheet opens pre-filled).
 export async function fetchMyRating(opts) {

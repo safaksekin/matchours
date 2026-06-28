@@ -162,3 +162,26 @@ create table if not exists public.api_cache (
 create index if not exists api_cache_expires_idx on public.api_cache (expires_at);
 alter table public.api_cache enable row level security;
 -- (intentionally no policies — only the service-role key, used server-side, may read/write)
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- favorites: a user's saved teams & players (shown in the Favorites tab / profile)
+-- ──────────────────────────────────────────────────────────────────────────
+create table if not exists public.favorites (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  kind        text not null check (kind in ('team','player')),
+  ref_id      text not null,            -- team id or player id
+  name        text,
+  image       text,                     -- team logo or player photo
+  meta        jsonb,                    -- extra: position, country, etc.
+  created_at  timestamptz not null default now(),
+  unique (user_id, kind, ref_id)
+);
+create index if not exists favorites_user_idx on public.favorites (user_id, created_at desc);
+alter table public.favorites enable row level security;
+drop policy if exists "favorites_select_own" on public.favorites;
+create policy "favorites_select_own" on public.favorites for select using (auth.uid() = user_id);
+drop policy if exists "favorites_insert_own" on public.favorites;
+create policy "favorites_insert_own" on public.favorites for insert with check (auth.uid() = user_id);
+drop policy if exists "favorites_delete_own" on public.favorites;
+create policy "favorites_delete_own" on public.favorites for delete using (auth.uid() = user_id);
