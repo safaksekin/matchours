@@ -60,10 +60,25 @@ export async function fetchComments(opts) {
   });
 }
 
+// All comments, newest first, with usernames — for the community/forum feed.
+export async function fetchCommunityFeed(limit) {
+  const { data } = await supabase.from("comments")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit || 60);
+  const rows = data || [];
+  if (!rows.length) return [];
+  const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
+  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
+  const nameById = {};
+  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  return rows.map(function (r) { return Object.assign({}, r, { user: nameById[r.user_id] || "kullanıcı" }); });
+}
+
 export async function addComment(opts) {
   const uid = await getUserId();
   if (!uid) return { error: "not_logged_in" };
-  const { data, error } = await supabase.from("comments").insert({
+  const base = {
     user_id: uid,
     target_type: opts.targetType,
     target_id: String(opts.targetId),
@@ -71,6 +86,14 @@ export async function addComment(opts) {
     target_name: opts.targetName || null,
     sport: opts.sport || "football",
     body: opts.body,
-  }).select("id, body, created_at, user_id").single();
-  return { data: data || null, error: error || null };
+  };
+  const extras = { match_name: opts.matchName || null, meta: opts.meta || null };
+  let res = await supabase.from("comments")
+    .insert(Object.assign({}, base, extras))
+    .select("id, body, created_at, user_id").single();
+  // Older DBs without the match_name / meta columns: retry without them so commenting never breaks.
+  if (res.error && /match_name|meta|column/i.test(String(res.error.message || ""))) {
+    res = await supabase.from("comments").insert(base).select("id, body, created_at, user_id").single();
+  }
+  return { data: res.data || null, error: res.error || null };
 }

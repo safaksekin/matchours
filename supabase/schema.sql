@@ -118,10 +118,15 @@ create table if not exists public.comments (
   target_id    text not null,
   match_id     text,                                     -- context: which match (for player comments)
   target_name  text,
+  match_name   text,                      -- "Home - Away" of the match this comment belongs to
+  meta         jsonb,                      -- snapshot: logos, score, player stats (for the community feed quote card)
   sport        text not null default 'football',
   body         text not null check (char_length(body) between 1 and 2000),
   created_at   timestamptz not null default now()
 );
+-- If the comments table already exists, add the new columns:
+alter table public.comments add column if not exists match_name text;
+alter table public.comments add column if not exists meta jsonb;
 
 create index if not exists comments_target_idx on public.comments (target_type, target_id, match_id);
 create index if not exists comments_user_idx    on public.comments (user_id);
@@ -140,3 +145,20 @@ create policy "comments_update_own" on public.comments for update using (auth.ui
 
 drop policy if exists "comments_delete_own" on public.comments;
 create policy "comments_delete_own" on public.comments for delete using (auth.uid() = user_id);
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- api_cache: persistent cache for immutable API-Football responses (finished
+-- matches, past seasons, player match stats, etc). Keyed by the API path, so
+-- one table holds every response type — value is the raw JSON `response`.
+-- The server (Cloudflare Worker) reads/writes this with the SERVICE ROLE key,
+-- which bypasses RLS; no anon policies => the public anon key cannot touch it.
+-- ──────────────────────────────────────────────────────────────────────────
+create table if not exists public.api_cache (
+  key         text primary key,         -- the API path, e.g. "/fixtures/players?fixture=12345"
+  payload     jsonb not null,           -- raw API `response` array/object
+  expires_at  timestamptz,              -- null = never expires (truly immutable, e.g. finished match)
+  created_at  timestamptz not null default now()
+);
+create index if not exists api_cache_expires_idx on public.api_cache (expires_at);
+alter table public.api_cache enable row level security;
+-- (intentionally no policies — only the service-role key, used server-side, may read/write)

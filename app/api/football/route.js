@@ -59,16 +59,65 @@ function memSet(url, data, ttl) {
   memCache.set(url, { exp: Date.now() + ttl * 1000, data: data });
 }
 
+// ── Persistent L2 cache in Supabase (api_cache table) ──────────────────────
+// Only long-TTL (immutable-ish) responses are stored here, so finished matches /
+// past seasons / player match stats survive edge eviction AND dev restarts:
+// once anyone fetches them, every later read is 0 API calls. Reads/writes use the
+// SERVICE ROLE key (server-only); if it's not configured the layer just no-ops.
+const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SB_ON = !!(SB_URL && SB_KEY);
+const PERSIST_TTL = 86400; // TTL >= 1 day => back the response with Supabase
+function sbHdr() { return { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }; }
+
+async function sbCacheGet(path) {
+  if (!SB_ON) return undefined;
+  try {
+    const u = SB_URL + "/rest/v1/api_cache?key=eq." + encodeURIComponent(path) + "&select=payload,expires_at";
+    const r = await fetch(u, { headers: sbHdr() });
+    if (!r.ok) return undefined;
+    const rows = await r.json();
+    const row = rows && rows[0];
+    if (!row) return undefined;
+    if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return undefined; // stale
+    return row.payload;
+  } catch (e) { return undefined; }
+}
+
+async function sbCacheSet(path, payload, ttl) {
+  if (!SB_ON) return;
+  try {
+    const expires = ttl >= 31536000 ? null : new Date(Date.now() + ttl * 1000).toISOString(); // >=1y => never expires
+    const u = SB_URL + "/rest/v1/api_cache?on_conflict=key";
+    await fetch(u, {
+      method: "POST",
+      headers: Object.assign(sbHdr(), { Prefer: "resolution=merge-duplicates,return=minimal" }),
+      body: JSON.stringify({ key: path, payload: payload, expires_at: expires }),
+    });
+  } catch (e) { /* cache write is best-effort */ }
+}
+
 async function apiGet(path, revalidate, _retried) {
   const ttl = revalidate || 60;
   const url = HOST + path;
+  const persist = ttl >= PERSIST_TTL; // immutable-ish -> also back it with Supabase
   const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
   const key = edge ? new Request(url, { method: "GET" }) : null;
-  if (!edge) { const m = memGet(url); if (m !== undefined) return m; } // dev cache hit
+  if (!edge) { const m = memGet(url); if (m !== undefined) return m; } // dev L1 (RAM) hit
   try {
     if (edge) {
       const hit = await edge.match(key);
       if (hit) { const j = JSON.parse(await hit.text()); return j && j.response ? j.response : null; }
+    }
+    // L2: Supabase (persistent) — only on L1 miss, only for immutable data
+    if (persist) {
+      const sb = await sbCacheGet(path);
+      if (sb !== undefined && sb !== null) {
+        // warm L1 so repeat reads in this colo/instance skip Supabase too
+        if (edge) { try { await edge.put(key, new Response(JSON.stringify({ response: sb }), { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl } })); } catch (e) {} }
+        else memSet(url, sb, ttl);
+        return sb;
+      }
     }
     const res = await fetch(url, { headers: hdr() });
     if (!res.ok) {
@@ -94,6 +143,7 @@ async function apiGet(path, revalidate, _retried) {
       } else {
         memSet(url, resp, ttl); // dev / no-edge: remember in RAM so refreshes don't re-hit the API
       }
+      if (persist) await sbCacheSet(path, resp, ttl); // immutable data -> persist across colos + dev restarts
     }
     return resp;
   } catch (e) { return null; }
@@ -145,6 +195,7 @@ function mapFixture(item, leagueName) {
     dateKey: d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
+    penScore: (function(){ var p = item.score && item.score.penalty; return (p && p.home != null && p.away != null) ? (p.home + " - " + p.away) : null; })(),
     stats: {
       referee: fx.referee || "—",
       stadium: (fx.venue && fx.venue.name) || "—",
@@ -798,10 +849,14 @@ export async function GET(request) {
   if (mode === "standings") {
     const leagueId = searchParams.get("league");
     const season = searchParams.get("season") || 2025;
-    let data = await apiGet("/standings?league=" + leagueId + "&season=" + season, 300);
-    // current season has no table yet -> fall back to previous season
+    // a completed (past) season is immutable -> 30 days (persisted); the in-progress one -> 30 min edge.
+    const nowM = new Date();
+    const CURRENT_SEASON = nowM.getMonth() >= 6 ? nowM.getFullYear() : nowM.getFullYear() - 1;
+    const stTtl = (parseInt(season, 10) < CURRENT_SEASON) ? 2592000 : 1800;
+    let data = await apiGet("/standings?league=" + leagueId + "&season=" + season, stTtl);
+    // current season has no table yet -> fall back to previous season (immutable -> 30 days, persisted)
     if (!data || !data[0] || !data[0].league || !data[0].league.standings) {
-      data = await apiGet("/standings?league=" + leagueId + "&season=" + (parseInt(season, 10) - 1), 600);
+      data = await apiGet("/standings?league=" + leagueId + "&season=" + (parseInt(season, 10) - 1), 2592000);
     }
     const groups = [];
     if (data && data[0] && data[0].league && data[0].league.standings) {
@@ -924,12 +979,16 @@ export async function GET(request) {
     const season = searchParams.get("season") || 2025;
     const homeTeam = searchParams.get("home");
     const awayTeam = searchParams.get("away");
+    const status = searchParams.get("status") || "";
 
-    // Keep per-match api calls low (rate limits): core 4 always, the rest only pre-match.
-    const lineupData = await apiGet("/fixtures/lineups?fixture=" + fixtureId, 600);
-    const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, 120);
-    const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, 120);
-    const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, 120);
+    // TTL by match state: a FINISHED match is immutable -> 30 days (persisted to Supabase,
+    // so later opens = 0 API). LIVE -> 30s (slight delay is fine). UPCOMING -> 5 min.
+    const finished = status === "finished";
+    const T = finished ? 2592000 : (status === "live" ? 30 : 300);
+    const lineupData = await apiGet("/fixtures/lineups?fixture=" + fixtureId, T);
+    const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, T);
+    const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, T);
+    const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, T);
     const hasMatchStats = !!(statsData && statsData.length);
     // injuries + season averages are only shown before kickoff -> skip them once the match has stats
     const injuryData = hasMatchStats ? null : await apiGet("/injuries?fixture=" + fixtureId, 300);
@@ -1016,6 +1075,8 @@ export async function GET(request) {
       var be = (b.time.elapsed || 0) + (b.time.extra || 0) / 100;
       return ae - be;
     }).forEach(function (ev) {
+      // skip penalty-shootout kicks — they'd otherwise inflate the running score; shown via penScore instead
+      if ((ev.comments || "").toLowerCase().indexOf("penalty shootout") >= 0) return;
       var type = (ev.type || "").toLowerCase();
       var detail = ev.detail || "";
       var isHome = homeTeamId != null && ev.team && ev.team.id === homeTeamId;
@@ -1032,7 +1093,9 @@ export async function GET(request) {
         side: isHome ? "home" : "away",
         type: type, detail: detail,
         player: (ev.player && ev.player.name) || "",
+        playerId: (ev.player && ev.player.id) || null,
         assist: (ev.assist && ev.assist.name) || "",
+        assistId: (ev.assist && ev.assist.id) || null,
         score: scoreAt,
       });
     });
