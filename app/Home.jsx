@@ -3341,8 +3341,13 @@ function NewsCard({ n, big, lang }) {
     style={{ display: "block", textDecoration: "none", background: COLORS.card, borderRadius: 18, overflow: "hidden",
       WebkitTapHighlightColor: "transparent", animation: "moFade 0.26s ease both" }}>
     {n.image && <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: COLORS.cardAlt, overflow: "hidden" }}>
-      <img src={"/api/img?u=" + encodeURIComponent(n.image)} alt="" loading="lazy"
-        onError={function(e){ if (e.currentTarget.parentElement) e.currentTarget.parentElement.style.display = "none"; }}
+      {/* try the CDN directly first (0 load on us); only browsers the CDN blocks (e.g. Chrome) fall back to our proxy */}
+      <img src={n.image} alt="" loading="lazy"
+        onError={function(e){
+          var img = e.currentTarget;
+          if (img.dataset.proxied) { if (img.parentElement) img.parentElement.style.display = "none"; }
+          else { img.dataset.proxied = "1"; img.src = "/api/img?u=" + encodeURIComponent(n.image); }
+        }}
         style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
     </div>}
     <div style={{ padding: big ? "14px 16px 16px" : "10px 12px 13px" }}>
