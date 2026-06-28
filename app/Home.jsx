@@ -2104,6 +2104,12 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
   var leagues = [];
   (groups || []).forEach(function(g){ (g.leagues || []).forEach(function(l){ leagues.push(l); }); });
   if (!leagues.length) return null;
+  // surface the big competitions first; everything else keeps its original order
+  var PRIORITY = { 2: 1, 3: 2, 848: 3, 39: 4, 203: 5, 140: 6, 78: 7, 135: 8, 61: 9 };
+  leagues = leagues.map(function(l, i){ return { l: l, i: i }; }).sort(function(a, b){
+    var pa = PRIORITY[a.l.id] || 999, pb = PRIORITY[b.l.id] || 999;
+    return pa !== pb ? pa - pb : a.i - b.i;
+  }).map(function(x){ return x.l; });
   function chip(active, glow){ return { flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 12,
     border: "1px solid " + (glow ? glow + "77" : (active ? COLORS.accent + "66" : COLORS.border)),
     background: glow ? ("linear-gradient(105deg, " + glow + "3a 0%, " + glow + "14 34%, transparent 74%), " + (active ? COLORS.accentDim : COLORS.card)) : (active ? COLORS.accentDim : COLORS.card),
@@ -3818,11 +3824,13 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       {t.signInBtn}
                     </button>}
               </span>
-              {/* news (next to the hamburger) */}
-              <button onClick={function(){ setShowNews(true); pushUrl("/news"); }} aria-label={t.news} style={{ width: 38, height: 38, borderRadius: 12,
-                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",
+              {/* news (next to the hamburger) — label shown on desktop only */}
+              <button onClick={function(){ setShowNews(true); pushUrl("/news"); }} aria-label={t.news} style={{ height: 38, padding: "0 11px", borderRadius: 12,
+                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex", gap: 7,
+                color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap",
                 alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v12a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9h-3" /><path d="M7 8h6M7 12h6M7 16h4" /></svg>
+                <span className="mo-only-desktop">{t.news}</span>
               </button>
               {/* hamburger — far right (settings, language, theme) */}
               <button onClick={function(){ setShowMenu(true); }} aria-label={t.menu} style={{ width: 38, height: 38, borderRadius: 12,
