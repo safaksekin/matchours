@@ -63,7 +63,7 @@ function isoLocal(d) {
 
 const I18N = {
   tr: { _lang: "tr", tagline: "Tüm spor istatistikleri, tek ekranda.", email: "E-posta", password: "Şifre",
-    login: "Giriş Yap", loggingIn: "Giriş yapılıyor...", noAccount: "Hesabın yok mu?", signup: "Kayıt ol",
+    login: "Giriş Yap", signInBtn: "Oturum Aç", menu: "Menü", loggingIn: "Giriş yapılıyor...", noAccount: "Hesabın yok mu?", signup: "Kayıt ol",
     matches: "Maç", noMatches: "Bu kategoride maç bulunamadı.", loading: "Yükleniyor...",
     live: "CANLI", info: "Bilgi", grid: "Grid", tv: "Yayın", comments: "Yorumlar",
     referee: "Hakem", stadium: "Stadyum", city: "Şehir", rank: "Lig Sırası",
@@ -95,7 +95,7 @@ const I18N = {
     appearance: "Görünüm", darkMode: "Koyu Mod",
     sports: { live: "Canlı", football: "Futbol", basketball: "Basketbol", motorsport: "Formula 1", tennis: "Tenis", volleyball: "Voleybol", esports: "Espor", mma: "MMA" } },
   en: { _lang: "en", tagline: "All sports stats, on one screen.", email: "Email", password: "Password",
-    login: "Log In", loggingIn: "Logging in...", noAccount: "No account?", signup: "Sign up",
+    login: "Log In", signInBtn: "Sign In", menu: "Menu", loggingIn: "Logging in...", noAccount: "No account?", signup: "Sign up",
     matches: "Matches", noMatches: "No matches in this category.", loading: "Loading...",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Broadcast", comments: "Comments",
     referee: "Referee", stadium: "Stadium", city: "City", rank: "League Rank",
@@ -127,7 +127,7 @@ const I18N = {
     appearance: "Appearance", darkMode: "Dark Mode",
     sports: { live: "Live", football: "Football", basketball: "Basketball", motorsport: "Formula 1", tennis: "Tennis", volleyball: "Volleyball", esports: "Esports", mma: "MMA" } },
   de: { _lang: "de", tagline: "Alle Sportstatistiken auf einem Bildschirm.", email: "E-Mail", password: "Passwort",
-    login: "Anmelden", loggingIn: "Anmeldung...", noAccount: "Kein Konto?", signup: "Registrieren",
+    login: "Anmelden", signInBtn: "Anmelden", menu: "Menü", loggingIn: "Anmeldung...", noAccount: "Kein Konto?", signup: "Registrieren",
     matches: "Spiele", noMatches: "Keine Spiele in dieser Kategorie.", loading: "Laden...",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Ubertragung", comments: "Kommentare",
     referee: "Schiedsrichter", stadium: "Stadion", city: "Stadt", rank: "Tabellenplatz",
@@ -1690,18 +1690,10 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
         </button>
       </div>
-      {/* section tabs: clean underline style (like a profile tab bar); sit inside the banner so the tube-light reaches them */}
-      <div className="mo-scroll" style={{ position: "relative", display: "flex", gap: 22, overflowX: "auto" }}>
-        {[{ id: "standing", label: t.standing }, { id: "scorers", label: t.scorers },
-          { id: "fixtures", label: t.fixturesLabel }, { id: "past", label: t.pastMatches }].map(function(tb){
-          var a = tab === tb.id;
-          return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ position: "relative", flexShrink: 0, background: "transparent",
-            border: "none", padding: "8px 2px", fontSize: 13, fontWeight: a ? 800 : 600, cursor: "pointer", whiteSpace: "nowrap",
-            color: a ? COLORS.textPrimary : COLORS.textSecondary, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-            {tb.label}
-            {a && <span style={{ position: "absolute", left: 0, right: 0, bottom: -2, height: 2.5, borderRadius: 3, background: COLORS.textPrimary }} />}
-          </button>; })}
-      </div>
+      {/* section tabs: sliding-underline tab bar; sits inside the banner so the tube-light reaches it */}
+      <UnderlineTabs baseline={false} active={tab} onChange={setTab}
+        tabs={[{ id: "standing", label: t.standing }, { id: "scorers", label: t.scorers },
+          { id: "fixtures", label: t.fixturesLabel }, { id: "past", label: t.pastMatches }]} />
     </div>
 
     <SlidePanel slideKey={tab} dir={0}>
@@ -1850,37 +1842,64 @@ function StandoutsRating({ players, t, onClose }) {
 }
 
 // Boxless feed: today's matches then previous days, each under a small date header.
+// Tab bar whose underline indicator slides smoothly to the active tab.
+function UnderlineTabs({ tabs, active, onChange, baseline }) {
+  var ref = useRef(null);
+  var [ind, setInd] = useState({ left: 0, width: 0 });
+  useEffect(function(){
+    function measure(){
+      var el = ref.current; if (!el) return;
+      var idx = tabs.findIndex(function(x){ return x.id === active; });
+      var btn = idx >= 0 ? el.children[idx] : null;
+      if (btn) setInd({ left: btn.offsetLeft, width: btn.offsetWidth });
+    }
+    measure();
+    var id = setTimeout(measure, 50);
+    window.addEventListener("resize", measure);
+    return function(){ clearTimeout(id); window.removeEventListener("resize", measure); };
+  }, [active, tabs.map(function(x){ return x.label; }).join("|")]);
+  return <div ref={ref} className="mo-scroll" style={{ position: "relative", display: "flex", gap: 22, overflowX: "auto",
+    marginBottom: 6, borderBottom: baseline === false ? "none" : ("1px solid " + COLORS.border) }}>
+    {tabs.map(function(tb){
+      var a = active === tb.id;
+      return <button key={tb.id} onClick={function(){ onChange(tb.id); }} style={{ flexShrink: 0, background: "transparent",
+        border: "none", padding: "11px 2px", fontSize: 13, fontWeight: a ? 800 : 600, cursor: "pointer", whiteSpace: "nowrap",
+        color: a ? COLORS.textPrimary : COLORS.textSecondary, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>{tb.label}</button>; })}
+    <span aria-hidden style={{ position: "absolute", bottom: -1, height: 2.5, borderRadius: 3, background: COLORS.textPrimary,
+      left: ind.left, width: ind.width, opacity: ind.width ? 1 : 0,
+      transition: "left 0.3s cubic-bezier(0.22,1,0.36,1), width 0.3s cubic-bezier(0.22,1,0.36,1), opacity 0.2s ease", pointerEvents: "none" }} />
+  </div>;
+}
+
 function DayMatchList({ matches, t, isF1, onOpen }) {
   var [tab, setTab] = useState("upcoming"); // "upcoming" | "finished"
   if (!matches || matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
 
-  // finished: most recent first; upcoming (+ live): live first, then nearest date/time first (top = soonest)
-  var finished = matches.filter(function(m){ return m.status === "finished"; })
-    .slice().sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
-  var upcoming = matches.filter(function(m){ return m.status === "upcoming" || m.status === "live"; })
-    .slice().sort(function(a, b){
-      var la = a.status === "live" ? 0 : 1, lb = b.status === "live" ? 0 : 1;
-      if (la !== lb) return la - lb;
-      return (a.ts || 0) - (b.ts || 0);
-    });
-  var list = tab === "finished" ? finished : upcoming;
+  var ascending = tab === "upcoming"; // upcoming: soonest day first; finished: most recent day first
+  var list = matches.filter(function(m){
+    return ascending ? (m.status === "upcoming" || m.status === "live") : (m.status === "finished");
+  });
+
+  var todayKey = isoLocal(new Date());
+  function header(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
+  // group by day, keep date separators; order days (and matches within a day) by the tab direction
+  var groups = {};
+  list.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
+  var keys = Object.keys(groups).sort(function(a, b){ return ascending ? (a < b ? -1 : a > b ? 1 : 0) : (a < b ? 1 : a > b ? -1 : 0); });
 
   return <div>
-    {/* two-option underline tabs: left = finished, right = upcoming (default) */}
-    <div style={{ display: "flex", gap: 26, borderBottom: "1px solid " + COLORS.border, marginBottom: 6, padding: "0 4px" }}>
-      {[{ id: "finished", label: t.finishedTab }, { id: "upcoming", label: t.upcomingTab }].map(function(tb){
-        var a = tab === tb.id;
-        return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ position: "relative", background: "transparent", border: "none",
-          padding: "12px 2px", fontSize: 13, fontWeight: a ? 800 : 600, cursor: "pointer", fontFamily: FONT,
-          color: a ? COLORS.textPrimary : COLORS.textMuted, transition: "color 0.2s", WebkitTapHighlightColor: "transparent" }}>
-          {tb.label}
-          {a && <span style={{ position: "absolute", left: 0, right: 0, bottom: -1, height: 2.5, borderRadius: 3, background: COLORS.accent }} />}
-        </button>; })}
-    </div>
-    {list.length === 0
+    <UnderlineTabs tabs={[{ id: "finished", label: t.finishedTab }, { id: "upcoming", label: t.upcomingTab }]} active={tab} onChange={setTab} />
+    {keys.length === 0
       ? <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>
-      : list.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
-          divider={i < list.length - 1} onOpen={function(){ onOpen(m); }} />; })}
+      : keys.map(function(k){
+          var items = groups[k].slice().sort(function(a, b){ return ascending ? ((a.ts || 0) - (b.ts || 0)) : ((b.ts || 0) - (a.ts || 0)); });
+          return <div key={k} style={{ marginBottom: 4 }}>
+            <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "16px 6px 8px",
+              borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
+            {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+              divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
+          </div>;
+        })}
   </div>;
 }
 
@@ -2606,7 +2625,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang }) {
       </div></div></div>;
 }
 
-function LoginScreen({ t, lang, setLang, theme }) {
+function LoginScreen({ t, lang, setLang, theme, onClose }) {
   var [mode, setMode] = useState("login"); // "login" | "signup"
   var [logoOk, setLogoOk] = useState(true);
   var [showPass, setShowPass] = useState(false);
@@ -2639,6 +2658,11 @@ function LoginScreen({ t, lang, setLang, theme }) {
 
   return <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex", flexDirection: "column",
     alignItems: "center", justifyContent: "center", padding: 24, fontFamily: FONT, position: "relative" }}>
+    {onClose && <button onClick={onClose} aria-label="kapat" style={{ position: "absolute", top: "max(18px, env(safe-area-inset-top))", left: 18,
+      width: 38, height: 38, borderRadius: 12, border: "none", background: COLORS.card, color: COLORS.textPrimary, cursor: "pointer",
+      display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>}
     <div style={{ marginBottom: 40, textAlign: "center" }}>
       {logoOk
         ? <img key={theme} src={theme === "dark" ? "/logo_dark.PNG" : "/logo_light.PNG"} alt="fikstür.com"
@@ -2685,6 +2709,55 @@ function LoginScreen({ t, lang, setLang, theme }) {
     </div></div>;
 }
 
+// Slide-in hamburger drawer: dark/light toggle, language, and links to settings / news.
+function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, onNews }) {
+  var [show, setShow] = useState(false);
+  useEffect(function(){
+    var r = requestAnimationFrame(function(){ setShow(true); });
+    var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    function onKey(e){ if (e.key === "Escape") close(); }
+    window.addEventListener("keydown", onKey);
+    return function(){ cancelAnimationFrame(r); document.body.style.overflow = prev; window.removeEventListener("keydown", onKey); };
+  }, []);
+  function close(){ setShow(false); setTimeout(onClose, 300); }
+  var card = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: COLORS.card, borderRadius: 14, marginBottom: 10 };
+  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 8px" };
+  return <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 140, display: "flex", justifyContent: "flex-end",
+    background: show ? "rgba(8,10,16,0.5)" : "rgba(8,10,16,0)", backdropFilter: show ? "blur(3px)" : "none", WebkitBackdropFilter: show ? "blur(3px)" : "none",
+    transition: "background 0.3s ease, backdrop-filter 0.3s ease, -webkit-backdrop-filter 0.3s ease" }}>
+    <div onClick={function(e){ e.stopPropagation(); }} style={{ width: "86%", maxWidth: 360, height: "100%", background: COLORS.bg, fontFamily: FONT,
+      padding: "max(18px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom))", overflowY: "auto", boxShadow: "-10px 0 44px rgba(0,0,0,0.34)",
+      transform: show ? "translateX(0)" : "translateX(100%)", transition: "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ color: COLORS.textPrimary, fontSize: 19, fontWeight: 800 }}>{t.menu}</span>
+        <button onClick={close} aria-label="kapat" style={{ width: 36, height: 36, borderRadius: 11, border: "none", background: COLORS.card,
+          color: COLORS.textPrimary, cursor: "pointer", fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>×</button>
+      </div>
+      <div style={label}>{t.appearance}</div>
+      <div style={card}>
+        <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>{t.darkMode}</span>
+        <button onClick={function(){ setTheme(theme === "dark" ? "light" : "dark"); }} aria-label="toggle dark mode"
+          style={{ width: 50, height: 28, borderRadius: 14, border: "none", cursor: "pointer", position: "relative",
+            background: theme === "dark" ? COLORS.accent : COLORS.border, transition: "background 0.3s ease", WebkitTapHighlightColor: "transparent" }}>
+          <span style={{ position: "absolute", top: 3, left: theme === "dark" ? 25 : 3, width: 22, height: 22, borderRadius: "50%",
+            background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.3)", transition: "left 0.3s cubic-bezier(0.22,1,0.36,1)" }} />
+        </button>
+      </div>
+      <div style={label}>{t.language}</div>
+      <LangSwitch lang={lang} setLang={setLang} />
+      <div style={{ height: 18 }} />
+      <button onClick={function(){ close(); setTimeout(onSettings, 300); }} style={Object.assign({ width: "100%", border: "none", cursor: "pointer", fontFamily: FONT }, card)}>
+        <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>{t.settings}</span>
+        <span style={{ color: COLORS.textMuted, fontSize: 18 }}>›</span>
+      </button>
+      <button onClick={function(){ close(); setTimeout(onNews, 300); }} style={Object.assign({ width: "100%", border: "none", cursor: "pointer", fontFamily: FONT }, card)}>
+        <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>{t.news}</span>
+        <span style={{ color: COLORS.textMuted, fontSize: 18 }}>›</span>
+      </button>
+    </div>
+  </div>;
+}
+
 export default function Home({ initialSport, initialLeagueSlug }) {
   // update the URL in place without a Next.js navigation (no server round-trip, no remount)
   function pushUrl(url) {
@@ -2718,6 +2791,8 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   var [showProfile, setShowProfile] = useState(false);
   var [showNews, setShowNews] = useState(false);
   var [showSettings, setShowSettings] = useState(false);
+  var [showLogin, setShowLogin] = useState(false); // login screen, opened from the header (app is browseable without login)
+  var [showMenu, setShowMenu] = useState(false);    // hamburger drawer
   var [theme, setTheme] = useState("dark"); // default dark; overridden by saved pref on mount
 
   // load saved theme (or system preference) once, then apply on change
@@ -2735,6 +2810,8 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   var [loading, setLoading] = useState(false);
   var t = I18N[lang];
   var loggedIn = !!session;
+  // once logged in, drop the login overlay (so logging out later doesn't force it back open)
+  useEffect(function(){ if (loggedIn) setShowLogin(false); }, [loggedIn]);
 
   // Track Supabase auth session
   useEffect(function(){
@@ -2806,7 +2883,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   }, [leagueTree]);
 
   useEffect(function(){
-    if (!loggedIn) return;
     // "live" reads from the football dataset (single source of truth)
     var source = (activeSport === "live") ? "football" : activeSport;
     // re-fetch if we have no real data yet (empty [] is truthy, so it would otherwise stick forever)
@@ -2856,7 +2932,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
 
   // load the league tree for the active sport (cached per sport); reset any league selection
   useEffect(function(){
-    if (!loggedIn) return;
     var sport = (activeSport === "live") ? "football" : activeSport;
     setSelectedLeague(null);
     if (leagueTree[sport]) return;
@@ -2913,7 +2988,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   // standouts of the day (football only), fetched once — DEFERRED so its heavy burst of
   // api-sports calls doesn't compete with the critical match-list fetch and trip rate limits.
   useEffect(function(){
-    if (!loggedIn) return;
     if (activeSport !== "football" && activeSport !== "live") return;
     if (standouts.length > 0) return;
     var id = setTimeout(function(){
@@ -2928,7 +3002,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
 
   // auto-refresh football data every 45s so live scores/minutes/status stay fresh
   useEffect(function(){
-    if (!loggedIn) return;
     if (activeSport !== "football" && activeSport !== "live") return;
     var id = setInterval(function(){
       fetch("/api/football?mode=list").then(function(r){ return r.json(); })
@@ -2940,7 +3013,7 @@ export default function Home({ initialSport, initialLeagueSlug }) {
 
   if (!authReady) return <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex",
     alignItems: "center", justifyContent: "center", color: COLORS.textSecondary, fontFamily: FONT, fontSize: 14 }}>{t.loading}</div>;
-  if (!loggedIn) return <LoginScreen t={t} lang={lang} setLang={setLang} theme={theme} />;
+  if (showLogin && !loggedIn) return <LoginScreen onClose={function(){ setShowLogin(false); }} t={t} lang={lang} setLang={setLang} theme={theme} />;
   if (showProfile) return <ProfilePage onBack={function(){ setShowProfile(false); }} onLogout={logout} session={session} t={t} lang={lang} setLang={setLang} />;
   if (showSettings) return <SimplePage title={t.settings} onBack={function(){ setShowSettings(false); }} t={t}>
     <div style={{ marginBottom: 22 }}>
@@ -3007,41 +3080,36 @@ export default function Home({ initialSport, initialLeagueSlug }) {
       "}"}</style>
 
     <div className="mo-shell" style={{ flex: "1 0 auto" }}>
-      <div className="mo-sticky" style={{ zIndex: 10, background: COLORS.bg, borderBottom: "1px solid " + COLORS.border,
-        paddingTop: "max(20px, env(safe-area-inset-top))" }}>
-        <div className="mo-header-inner" style={{ padding: "0 20px 14px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+      <div className="mo-sticky" style={{ zIndex: 10, background: COLORS.card,
+        boxShadow: "0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)",
+        paddingTop: "max(12px, env(safe-area-inset-top))" }}>
+        <div className="mo-header-inner" style={{ padding: "0 16px 8px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <Logo theme={theme} onHome={goHome} />
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* login (mock) */}
-              <button onClick={function(){ setShowProfile(true); }} style={{ padding: "8px 13px", borderRadius: 12,
-                background: COLORS.accent, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
-                fontFamily: FONT, WebkitTapHighlightColor: "transparent", whiteSpace: "nowrap" }}>{t.login}</button>
-              {/* news (icon to be added by user) */}
-              <button onClick={function(){ setShowNews(true); }} aria-label="news" style={{ width: 38, height: 38, borderRadius: 13,
-                background: COLORS.card, border: "none", cursor: "pointer", display: "flex",
+              {/* hamburger menu (settings, language, theme) */}
+              <button onClick={function(){ setShowMenu(true); }} aria-label={t.menu} style={{ width: 38, height: 38, borderRadius: 12,
+                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",
                 alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
-                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 5h13v14H5a1 1 0 0 1-1-1V5z" /><path d="M17 8h2a1 1 0 0 1 1 1v9a1 1 0 0 1-2 0" /><path d="M7 9h7M7 13h7M7 17h4" /></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
               </button>
-              {/* settings */}
-              <button onClick={function(){ setShowSettings(true); }} aria-label="settings" style={{ width: 38, height: 38, borderRadius: 13,
-                background: COLORS.card, border: "none", cursor: "pointer", display: "flex",
-                alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
-                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-              </button>
-              {/* profile */}
-              <button onClick={function(){ setShowProfile(true); }} aria-label="profile" style={{ width: 38, height: 38, borderRadius: 13,
-                background: COLORS.card, border: "none", cursor: "pointer", display: "flex",
-                alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
-                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
-              </button>
+              {/* profile when signed in, otherwise a sign-in button */}
+              {loggedIn
+                ? <button onClick={function(){ setShowProfile(true); }} aria-label="profile" style={{ width: 38, height: 38, borderRadius: 12,
+                    background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",
+                    alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
+                  </button>
+                : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 12,
+                    background: COLORS.accent, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
+                    fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
+                    {t.signInBtn}
+                  </button>}
             </div>
             </div>
           {/* search bar: centered, compact by default, grows a little on focus (still shorter than full width) */}
-          <div style={{ position: "relative", margin: "0 auto 14px",
+          <div style={{ position: "relative", margin: "0 auto 10px",
             width: searchFocus ? 440 : 300, maxWidth: "100%",
             transition: "width 0.35s cubic-bezier(0.22,1,0.36,1)" }}>
             <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
@@ -3161,5 +3229,7 @@ export default function Home({ initialSport, initialLeagueSlug }) {
     {/* match modal rendered last so it stacks above team/player modals when opened from within them */}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t}
       onClose={function(){ setSelectedMatch(null); }} />}
+    {showMenu && <MenuDrawer onClose={function(){ setShowMenu(false); }} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} t={t}
+      onSettings={function(){ setShowSettings(true); }} onNews={function(){ setShowNews(true); }} />}
   </div>;
 }
