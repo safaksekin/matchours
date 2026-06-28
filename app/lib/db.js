@@ -9,6 +9,18 @@ export async function getUserId() {
   } catch (e) { return null; }
 }
 
+// The signed-in user's own comments (+ total count) for the profile page.
+export async function fetchMyComments(limit) {
+  const uid = await getUserId();
+  if (!uid) return { count: 0, items: [] };
+  const { data, count } = await supabase.from("comments")
+    .select("*", { count: "exact" })
+    .eq("user_id", uid)
+    .order("created_at", { ascending: false })
+    .limit(limit || 6);
+  return { count: count || 0, items: data || [] };
+}
+
 // ── Favorites (teams & players) ─────────────────────────────────────────────
 export async function fetchFavorites() {
   const uid = await getUserId();

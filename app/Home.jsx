@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
 import { supabase } from "./lib/supabaseClient";
 import { fetchMyRating, saveRating, fetchComments, addComment as dbAddComment, fetchCommunityFeed,
-  fetchFavorites, addFavorite, removeFavorite } from "./lib/db";
+  fetchFavorites, addFavorite, removeFavorite, fetchMyComments } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -2468,7 +2468,7 @@ function PlayerModal({ player, t, onClose }) {
     transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll mo-matchsheet"
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd} style={{
-      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden",
+      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
       WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
       background: "var(--modalGrad)",
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
@@ -2615,7 +2615,7 @@ function TeamModal({ team, t, onClose, onOpenMatch }) {
     transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll mo-matchsheet"
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd} style={{
-      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden",
+      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
       WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
       background: "var(--modalGrad)",
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
@@ -2749,69 +2749,114 @@ function SimplePage({ title, onBack, t, children }) {
 function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
   useFavorites();
   var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
+  var favTeams = favRecs.filter(function(r){ return r.kind === "team"; });
+  var favPlayers = favRecs.filter(function(r){ return r.kind === "player"; });
+  var [my, setMy] = useState({ count: 0, items: [] });
+  useEffect(function(){
+    var cancelled = false;
+    fetchMyComments(6).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
+    return function(){ cancelled = true; };
+  }, []);
   var userEmail = (session && session.user && session.user.email) || "";
   var displayName = userEmail ? userEmail.split("@")[0] : "user";
   var initial = displayName ? displayName[0].toUpperCase() : "U";
-  var stats = [{ label: t.followedMatches, val: "147" }, { label: t.commentsCount, val: "38" },
-    { label: t.favLeague, val: "Super Lig" }, { label: t.membership, val: lang === "de" ? "Jan. 2024" : "Ocak 2024" }];
-  var act = { tr: ["Galatasaray - Fenerbahce takip edildi", "El Clasico'ya yorum yapildi", "Wimbledon favoriledi"],
-    en: ["Followed Galatasaray - Fenerbahce", "Commented on El Clasico", "Favorited Wimbledon"],
-    de: ["Galatasaray - Fenerbahce verfolgt", "El Clasico kommentiert", "Wimbledon favorisiert"] };
-  var times = { tr: ["2s once", "1g once", "3g once"], en: ["2h ago", "1d ago", "3d ago"], de: ["vor 2 Std", "vor 1 Tag", "vor 3 Tagen"] };
+  var createdAt = session && session.user && session.user.created_at;
+  var locale = lang === "tr" ? "tr-TR" : (lang === "de" ? "de-DE" : "en-US");
+  var memberSince = createdAt ? new Date(createdAt).toLocaleDateString(locale, { month: "short", year: "numeric" }) : "—";
+  var stats = [
+    { label: t.favTeams, val: favTeams.length },
+    { label: "Oyuncu", val: favPlayers.length },
+    { label: t.commentsCount, val: my.count },
+    { label: t.membership, val: memberSince },
+  ];
+  var sectionLabel = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 12 };
+
+  function favStrip(list, kind) {
+    return <div className="mo-scroll" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+      {list.map(function(r){
+        return <div key={r.kind + r.ref_id} onClick={function(){ if (kind === "team") { if (onOpenTeam) onOpenTeam(r); } else { if (onOpenPlayer) onOpenPlayer(r); } }}
+          style={{ flexShrink: 0, width: 66, cursor: "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" }}>
+          <div style={{ width: 62, height: 62, borderRadius: "50%", margin: "0 auto 6px", background: COLORS.card,
+            border: "1px solid " + COLORS.border, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+            {r.image
+              ? (kind === "team"
+                  ? <img src={r.image} alt="" style={{ width: 40, height: 40, objectFit: "contain" }} />
+                  : <img src={r.image} alt="" style={{ width: 62, height: 62, objectFit: "cover", borderRadius: "50%" }} />)
+              : <span style={{ color: COLORS.textMuted, fontSize: 20, fontWeight: 800 }}>{(r.name || "?")[0]}</span>}
+          </div>
+          <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(r.name, t)}</div>
+        </div>; })}
+    </div>;
+  }
+
   return <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: FONT }}>
     <div style={{ maxWidth: 560, margin: "0 auto", width: "100%",
       paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}>
-      <div className="mo-sticky" style={{ padding: "max(20px, env(safe-area-inset-top)) 20px 16px", zIndex: 10, background: COLORS.bg,
+      {/* top bar */}
+      <div className="mo-sticky" style={{ padding: "max(20px, env(safe-area-inset-top)) 20px 14px", zIndex: 10, background: COLORS.bg,
         borderBottom: "1px solid " + COLORS.border, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <button onClick={onBack} style={{ background: COLORS.card, border: "none", borderRadius: 12,
-            padding: "8px 14px", color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t.back}</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={onBack} aria-label="back" style={{ width: 38, height: 38, borderRadius: 13, background: COLORS.card, border: "none",
+            cursor: "pointer", color: COLORS.textPrimary, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>‹</button>
           <span style={{ color: COLORS.textPrimary, fontSize: 17, fontWeight: 800 }}>{t.profile}</span></div>
-        <LangSwitch lang={lang} setLang={setLang} /></div>
-      <div style={{ padding: "24px 20px 60px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
-          <div style={{ width: 68, height: 68, borderRadius: 22, flexShrink: 0,
+        <LangSwitch lang={lang} setLang={setLang} />
+      </div>
+
+      {/* hero: soft gradient glow + avatar */}
+      <div style={{ position: "relative", overflow: "hidden", padding: "26px 20px 22px" }}>
+        <span aria-hidden style={{ position: "absolute", left: -40, right: -40, top: -56, height: 150, pointerEvents: "none", opacity: 0.5,
+          filter: "blur(42px)", WebkitFilter: "blur(42px)", background: "linear-gradient(120deg, " + COLORS.accent + ", " + COLORS.teal + " 72%, transparent)" }} />
+        <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ width: 72, height: 72, borderRadius: 24, flexShrink: 0,
             background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, fontWeight: 800, color: "#fff" }}>{initial}</div>
-          <div><div style={{ color: COLORS.textPrimary, fontSize: 19, fontWeight: 800, marginBottom: 3 }}>{displayName}</div>
-            <div style={{ color: COLORS.textSecondary, fontSize: 13 }}>{userEmail}</div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 6, background: COLORS.accentDim,
-              borderRadius: 8, padding: "3px 10px" }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.accent, display: "inline-block" }} />
-              <span style={{ color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{t.pro}</span></div></div></div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 22 }}>
-          {stats.map(function(st, i){ return <div key={i} style={{ background: COLORS.card, borderRadius: 18, padding: 16,
-            border: "none" }}>
-            <div style={{ color: COLORS.textPrimary, fontSize: 20, fontWeight: 800, marginBottom: 4 }}>{st.val}</div>
-            <div style={{ color: COLORS.textSecondary, fontSize: 12 }}>{st.label}</div></div>; })}</div>
-        <div style={{ marginBottom: 22 }}>
-          <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.6px", marginBottom: 10 }}>{t.favTeams}</div>
-          {favRecs.length === 0
-            ? <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "6px 2px" }}>Henüz favori yok.</div>
-            : favRecs.map(function(r){ return <div key={r.kind + r.ref_id}
-                onClick={function(){ if (r.kind === "team" && onOpenTeam) onOpenTeam(r); else if (r.kind === "player" && onOpenPlayer) onOpenPlayer(r); }}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 7,
-                  background: COLORS.card, borderRadius: 16, border: "none", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-                {r.kind === "team"
-                  ? <TeamLogo src={r.image} name={r.name} size={34} />
-                  : (r.image
-                      ? <img src={r.image} alt="" style={{ width: 34, height: 34, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
-                      : <span style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
-                          alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 13, fontWeight: 800 }}>{(r.name || "?")[0]}</span>)}
-                <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 14, fontWeight: 700,
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(r.name, t)}</span>
-                <span style={{ color: COLORS.textMuted, fontSize: 11, flexShrink: 0 }}>{r.kind === "team" ? "Takım" : "Oyuncu"}</span>
-              </div>; })}</div>
-        <div>
-          <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.6px", marginBottom: 10 }}>{t.recentActivity}</div>
-          {act[lang].map(function(text, i){ return <div key={i} style={{ padding: "11px 14px", marginBottom: 7,
-            background: COLORS.card, borderRadius: 16, border: "none", display: "flex",
-            justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ color: COLORS.textPrimary, fontSize: 13, flex: 1, marginRight: 10 }}>{text}</span>
-            <span style={{ color: COLORS.textMuted, fontSize: 11, flexShrink: 0 }}>{times[lang][i]}</span></div>; })}</div>
-        <button onClick={onLogout} style={{ width: "100%", marginTop: 28, padding: 14, background: "transparent",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff",
+            boxShadow: "0 8px 22px " + COLORS.accent + "44" }}>{initial}</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: COLORS.textPrimary, fontSize: 21, fontWeight: 800, marginBottom: 3,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
+            <div style={{ color: COLORS.textSecondary, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userEmail}</div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 7, background: COLORS.accentDim, borderRadius: 8, padding: "3px 10px" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.accent }} />
+              <span style={{ color: COLORS.accent, fontSize: 11, fontWeight: 800 }}>{t.pro}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "0 20px 60px" }}>
+        {/* stats: single card, 4 columns with dividers */}
+        <div style={{ display: "flex", background: COLORS.card, borderRadius: 18, padding: "16px 6px", marginBottom: 24 }}>
+          {stats.map(function(st, i){ return <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0, padding: "0 4px",
+            borderLeft: i ? "1px solid " + COLORS.border : "none" }}>
+            <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800, marginBottom: 3,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.val}</div>
+            <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.label}</div></div>; })}
+        </div>
+
+        {/* favorites */}
+        {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
+        {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Favori Oyuncular</div>{favStrip(favPlayers, "player")}</div>}
+        {favRecs.length === 0 && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>{t.favTeams}</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.</div>
+        </div>}
+
+        {/* real recent comments */}
+        {my.items.length > 0 && <div style={{ marginBottom: 8 }}>
+          <div style={sectionLabel}>Son Yorumların</div>
+          {my.items.map(function(c){
+            var isPl = c.target_type === "player";
+            var ctx = c.match_name || c.target_name || "";
+            return <div key={c.id} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16 }}>
+              <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.45, marginBottom: ctx ? 7 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
+              {ctx && <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: COLORS.textMuted }}>
+                <span style={{ fontWeight: 800, color: COLORS.accent }}>{isPl ? "Oyuncu" : "Maç"}</span>
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{ctx}</span>
+                <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(c.created_at)}</span>
+              </div>}
+            </div>; })}
+        </div>}
+
+        <button onClick={onLogout} style={{ width: "100%", marginTop: 20, padding: 14, background: "transparent",
           border: "1px solid " + COLORS.red + "55", borderRadius: 16, color: COLORS.red, fontSize: 14,
           fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t.logout}</button>
       </div></div></div>;
