@@ -69,15 +69,22 @@ function fmtSeasonLabel(yr) {
   return yr + "/" + nx;
 }
 
-// Twitter-style relative time: "şimdi", "12sn önce", "5dk önce", "3sa önce", then the date past 1 day.
-function relTime(iso) {
+// Twitter-style relative time, localized: now / Xs / Xm / Xh, then the date past 1 day.
+function relTime(iso, lang) {
+  var L = lang || "tr";
+  var W = {
+    tr: { now: "şimdi", s: "sn önce", m: "dk önce", h: "sa önce", loc: "tr-TR" },
+    en: { now: "now", s: "s ago", m: "m ago", h: "h ago", loc: "en-US" },
+    de: { now: "jetzt", s: "s", m: "m", h: "Std", loc: "de-DE" },
+  }[L] || { now: "şimdi", s: "sn önce", m: "dk önce", h: "sa önce", loc: "tr-TR" };
+  function unit(n, key) { return L === "de" ? ("vor " + n + W[key]) : (n + W[key]); }
   try {
     var diff = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (diff < 5) return "şimdi";
-    if (diff < 60) return Math.floor(diff) + "sn önce";
-    if (diff < 3600) return Math.floor(diff / 60) + "dk önce";
-    if (diff < 86400) return Math.floor(diff / 3600) + "sa önce";
-    return new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    if (diff < 5) return W.now;
+    if (diff < 60) return unit(Math.floor(diff), "s");
+    if (diff < 3600) return unit(Math.floor(diff / 60), "m");
+    if (diff < 86400) return unit(Math.floor(diff / 3600), "h");
+    return new Date(iso).toLocaleDateString(W.loc, { day: "2-digit", month: "2-digit", year: "numeric" });
   } catch (e) { return ""; }
 }
 
@@ -149,6 +156,11 @@ const I18N = {
     profile: "Profil", back: "Geri", member: "matchours üyesi", pro: "PRO üye",
     followedMatches: "Takip Edilen", commentsCount: "Yorum", favLeague: "Favori Lig", membership: "Üyelik",
     favTeams: "Favori Takımlar", recentActivity: "Son Aktivite", logout: "Çıkış Yap",
+    navMatch: "Maç", navSearch: "Ara", navCommunity: "Topluluk", navFavorites: "Favoriler", navProfile: "Profil",
+    community: "Topluluk", favorites: "Favoriler", favPlayers: "Favori Oyuncular", recentComments: "Son Yorumların",
+    noFavorites: "Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.",
+    favLoginPrompt: "Favorilerini görmek için giriş yap.", noComments: "Henüz yorum yok. İlk yorumu sen yap!",
+    matchTag: "Maç", playerTag: "Oyuncu", teamTag: "Takım",
     scorers: "Gol Kralları", standing: "Puan Durumu", points: "P", matchday: "Hafta", week: "Hafta", noStandings: "Puan durumu mevcut değil.", noH2h: "Geçmiş karşılaşma yok.",
     fillFields: "Email ve şifre gerekli.", checkEmail: "Onay için e-postanı kontrol et.",
     finished: "Maç Sonucu",
@@ -181,6 +193,11 @@ const I18N = {
     profile: "Profile", back: "Back", member: "matchours member", pro: "PRO member",
     followedMatches: "Followed", commentsCount: "Comments", favLeague: "Favorite League", membership: "Member Since",
     favTeams: "Favorite Teams", recentActivity: "Recent Activity", logout: "Log Out",
+    navMatch: "Matches", navSearch: "Search", navCommunity: "Community", navFavorites: "Favorites", navProfile: "Profile",
+    community: "Community", favorites: "Favorites", favPlayers: "Favorite Players", recentComments: "Your Recent Comments",
+    noFavorites: "No favorites yet. Tap the save button next to a team or player.",
+    favLoginPrompt: "Sign in to see your favorites.", noComments: "No comments yet. Be the first!",
+    matchTag: "Match", playerTag: "Player", teamTag: "Team",
     scorers: "Top Scorers", standing: "Standings", points: "pts", matchday: "Matchday", week: "Week", noStandings: "Standings not available.", noH2h: "No previous meetings.",
     fillFields: "Email and password required.", checkEmail: "Check your email to confirm.",
     finished: "Full Time",
@@ -213,6 +230,11 @@ const I18N = {
     profile: "Profil", back: "Zuruck", member: "matchours Mitglied", pro: "PRO Mitglied",
     followedMatches: "Verfolgt", commentsCount: "Kommentare", favLeague: "Lieblingsliga", membership: "Mitglied seit",
     favTeams: "Lieblingsteams", recentActivity: "Letzte Aktivitat", logout: "Abmelden",
+    navMatch: "Spiele", navSearch: "Suche", navCommunity: "Community", navFavorites: "Favoriten", navProfile: "Profil",
+    community: "Community", favorites: "Favoriten", favPlayers: "Lieblingsspieler", recentComments: "Deine letzten Kommentare",
+    noFavorites: "Noch keine Favoriten. Tippe auf das Speichern-Symbol neben einem Team oder Spieler.",
+    favLoginPrompt: "Melde dich an, um deine Favoriten zu sehen.", noComments: "Noch keine Kommentare. Sei der Erste!",
+    matchTag: "Spiel", playerTag: "Spieler", teamTag: "Team",
     scorers: "Torjager", standing: "Tabelle", points: "Pkt", matchday: "Spieltag", week: "Spieltag", noStandings: "Tabelle nicht verfugbar.", noH2h: "Keine fruheren Begegnungen.",
     fillFields: "E-Mail und Passwort erforderlich.", checkEmail: "Bestatige deine E-Mail.",
     finished: "Endstand",
@@ -2764,8 +2786,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var locale = lang === "tr" ? "tr-TR" : (lang === "de" ? "de-DE" : "en-US");
   var memberSince = createdAt ? new Date(createdAt).toLocaleDateString(locale, { month: "short", year: "numeric" }) : "—";
   var stats = [
-    { label: t.favTeams, val: favTeams.length },
-    { label: "Oyuncu", val: favPlayers.length },
+    { label: t.teamTag, val: favTeams.length },
+    { label: t.playerTag, val: favPlayers.length },
     { label: t.commentsCount, val: my.count },
     { label: t.membership, val: memberSince },
   ];
@@ -2834,24 +2856,24 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
 
         {/* favorites */}
         {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
-        {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Favori Oyuncular</div>{favStrip(favPlayers, "player")}</div>}
+        {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favPlayers}</div>{favStrip(favPlayers, "player")}</div>}
         {favRecs.length === 0 && <div style={{ marginBottom: 22 }}>
           <div style={sectionLabel}>{t.favTeams}</div>
-          <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.noFavorites}</div>
         </div>}
 
         {/* real recent comments */}
         {my.items.length > 0 && <div style={{ marginBottom: 8 }}>
-          <div style={sectionLabel}>Son Yorumların</div>
+          <div style={sectionLabel}>{t.recentComments}</div>
           {my.items.map(function(c){
             var isPl = c.target_type === "player";
             var ctx = c.match_name || c.target_name || "";
             return <div key={c.id} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16 }}>
               <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.45, marginBottom: ctx ? 7 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
               {ctx && <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: COLORS.textMuted }}>
-                <span style={{ fontWeight: 800, color: COLORS.accent }}>{isPl ? "Oyuncu" : "Maç"}</span>
+                <span style={{ fontWeight: 800, color: COLORS.accent }}>{isPl ? t.playerTag : t.matchTag}</span>
                 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{ctx}</span>
-                <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(c.created_at)}</span>
+                <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(c.created_at, lang)}</span>
               </div>}
             </div>; })}
         </div>}
@@ -3010,10 +3032,11 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
 }
 
 // Mobile-only bottom navigation (Instagram-style) with a single sliding indicator line.
-function MobileBottomNav({ active, onSelect }) {
+function MobileBottomNav({ active, onSelect, t }) {
+  t = t || I18N.tr;
   var ref = useRef(null);
   var [ind, setInd] = useState({ left: 0, width: 0 });
-  var items = [["mac", "Maç"], ["arama", "Ara"], ["topluluk", "Topluluk"], ["favoriler", "Favoriler"], ["profil", "Profil"]];
+  var items = [["mac", t.navMatch], ["arama", t.navSearch], ["topluluk", t.navCommunity], ["favoriler", t.navFavorites], ["profil", t.navProfile]];
   useEffect(function(){
     function measure(){
       var el = ref.current; if (!el) return;
@@ -3066,8 +3089,8 @@ function CommentCard({ c, onOpenMatch, t }) {
   // match quote: logos/flags + score (no team text)
   function matchQuote() {
     if (!m) return <div style={Object.assign({ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px" }, quoteBase)}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, background: COLORS.accentDim, padding: "2px 8px", borderRadius: 7 }}>Maç</span>
-      <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 600 }}>{c.target_name || "Maç"}</span></div>;
+      <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, background: COLORS.accentDim, padding: "2px 8px", borderRadius: 7 }}>{t.matchTag}</span>
+      <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 600 }}>{c.target_name || t.matchTag}</span></div>;
     var showScore = m.score && (m.status === "live" || m.status === "finished");
     var nameStyle = { fontSize: 11, fontWeight: 600, color: COLORS.textSecondary, textAlign: "center",
       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" };
@@ -3093,7 +3116,7 @@ function CommentCard({ c, onOpenMatch, t }) {
   // player quote: photo + name(+rating) + goals/assists/cards, with the match on the footer ("sap")
   function playerQuote() {
     var photo = (meta && meta.photo) || ("https://media.api-sports.io/football/players/" + c.target_id + ".png");
-    var nm = (meta && meta.name) || c.target_name || "Oyuncu";
+    var nm = (meta && meta.name) || c.target_name || t.playerTag;
     var g = meta && meta.goals, a = meta && meta.assists, y = meta && meta.yellow, rc = meta && meta.red;
     var hasStats = (g || a || y || rc);
     var footName = c.match_name || (m ? ((m.home || "") + " - " + (m.away || "")) : "");
@@ -3132,7 +3155,7 @@ function CommentCard({ c, onOpenMatch, t }) {
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
         <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>@{name}</span>
-        <span style={{ color: COLORS.textMuted, fontSize: 12, flexShrink: 0 }}>· {relTime(c.created_at)}</span>
+        <span style={{ color: COLORS.textMuted, fontSize: 12, flexShrink: 0 }}>· {relTime(c.created_at, t && t._lang)}</span>
       </div>
       <div style={{ color: COLORS.textPrimary, fontSize: 14, lineHeight: 1.45, marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
       {isPlayer ? playerQuote() : matchQuote()}
@@ -3148,20 +3171,21 @@ function CommunityPage({ onBack, t, onOpenMatch }) {
     fetchCommunityFeed(60).then(function(rows){ if (!cancelled) setList(rows); }).catch(function(){ if (!cancelled) setList([]); });
     return function(){ cancelled = true; };
   }, []);
-  return <SimplePage title="Topluluk" onBack={onBack} t={t}>
+  return <SimplePage title={t.community} onBack={onBack} t={t}>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
       {list === null
         ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.loading}</div>
         : list.length === 0
-          ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>Henüz yorum yok. İlk yorumu sen yap!</div>
+          ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.noComments}</div>
           : list.map(function(c){ return <CommentCard key={c.id} c={c} onOpenMatch={onOpenMatch} t={t} />; })}
     </div>
   </SimplePage>;
 }
 
 // One saved team/player row in the Favorites page.
-function FavoriteRow({ rec, onOpen }) {
+function FavoriteRow({ rec, onOpen, t }) {
   var sub = rec.meta && (rec.meta.position || rec.meta.country);
+  var displayName = rec.kind === "team" ? locTeam(rec.name, t) : rec.name;
   return <div onClick={onOpen} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 6px",
     borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
     {rec.kind === "team"
@@ -3171,7 +3195,7 @@ function FavoriteRow({ rec, onOpen }) {
           : <span style={{ width: 38, height: 38, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
               alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 14, fontWeight: 700 }}>{(rec.name || "?")[0]}</span>)}
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rec.name || "?"}</div>
+      <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName || "?"}</div>
       {sub && <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{sub}</div>}
     </div>
     <FavButton kind={rec.kind} refId={rec.ref_id} name={rec.name} image={rec.image} meta={rec.meta} />
@@ -3185,21 +3209,21 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer 
   var teams = recs.filter(function(r){ return r.kind === "team"; });
   var players = recs.filter(function(r){ return r.kind === "player"; });
   var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 6px" };
-  return <SimplePage title="Favoriler" onBack={onBack} t={t}>
+  return <SimplePage title={t.favorites} onBack={onBack} t={t}>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
       {!loggedIn
         ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>
-            Favorilerini görmek için giriş yap.
+            {t.favLoginPrompt}
             <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, color: "#fff",
-              border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>Oturum Aç</button></div>
+              border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
           </div>
         : recs.length === 0
-          ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.</div>
+          ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noFavorites}</div>
           : <div>
-              {teams.length > 0 && <div><div style={label}>Takımlar</div>
-                {teams.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} onOpen={function(){ onOpenTeam(r); }} />; })}</div>}
-              {players.length > 0 && <div><div style={label}>Oyuncular</div>
-                {players.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} onOpen={function(){ onOpenPlayer(r); }} />; })}</div>}
+              {teams.length > 0 && <div><div style={label}>{t.teamsLabel}</div>
+                {teams.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} t={t} onOpen={function(){ onOpenTeam(r); }} />; })}</div>}
+              {players.length > 0 && <div><div style={label}>{t.players}</div>
+                {players.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} t={t} onOpen={function(){ onOpenPlayer(r); }} />; })}</div>}
             </div>}
     </div>
   </SimplePage>;
@@ -3523,7 +3547,7 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   if (showProfile) return <><AppStyles /><ProfilePage onBack={function(){ setShowProfile(false); }} onLogout={logout} session={session} t={t} lang={lang} setLang={setLang}
       onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
       onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }} />
-    <MobileBottomNav active="profil" onSelect={onMobileNav} />
+    <MobileBottomNav active="profil" onSelect={onMobileNav} t={t} />
     {selectedTeam && <TeamModal team={selectedTeam} t={t} onClose={function(){ setSelectedTeam(null); }} onOpenMatch={function(m){ setSelectedMatch(m); }} />}
     {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
@@ -3554,16 +3578,16 @@ export default function Home({ initialSport, initialLeagueSlug }) {
   if (comingSoon) return <><AppStyles /><SimplePage title={comingSoon} onBack={function(){ setComingSoon(null); }} t={t}>
     <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>Yakında.</div>
   </SimplePage>
-    <MobileBottomNav active="favoriler" onSelect={onMobileNav} /></>;
+    <MobileBottomNav active="favoriler" onSelect={onMobileNav} t={t} /></>;
   if (showCommunity) return <><AppStyles /><CommunityPage onBack={function(){ setShowCommunity(false); }} t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} />
-    <MobileBottomNav active="topluluk" onSelect={onMobileNav} />
+    <MobileBottomNav active="topluluk" onSelect={onMobileNav} t={t} />
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
   if (showFavorites) return <><AppStyles />
     <FavoritesPage onBack={function(){ setShowFavorites(false); }} t={t} loggedIn={loggedIn}
       onLogin={function(){ setShowLogin(true); }}
       onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
       onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }} />
-    <MobileBottomNav active="favoriler" onSelect={onMobileNav} />
+    <MobileBottomNav active="favoriler" onSelect={onMobileNav} t={t} />
     {selectedTeam && <TeamModal team={selectedTeam} t={t} onClose={function(){ setSelectedTeam(null); }} onOpenMatch={function(m){ setSelectedMatch(m); }} />}
     {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
@@ -3602,20 +3626,20 @@ export default function Home({ initialSport, initialLeagueSlug }) {
             <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
               {/* community (desktop only — mobile uses the bottom-nav "Topluluk") */}
               <span className="mo-only-desktop">
-                <button onClick={function(){ setShowCommunity(true); }} aria-label="Topluluk" style={{ display: "flex", alignItems: "center", gap: 7,
+                <button onClick={function(){ setShowCommunity(true); }} aria-label={t.community} style={{ display: "flex", alignItems: "center", gap: 7,
                   padding: "8px 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5" /><path d="M16.5 5.6a3 3 0 0 1 0 5.6M18.5 20c0-2-.7-3.6-2-4.6" /></svg>
-                  Topluluk
+                  {t.community}
                 </button>
               </span>
               {/* favorites (desktop only — mobile uses the bottom-nav "Favoriler") */}
               <span className="mo-only-desktop">
-                <button onClick={function(){ setShowFavorites(true); }} aria-label="Favoriler" style={{ display: "flex", alignItems: "center", gap: 7,
+                <button onClick={function(){ setShowFavorites(true); }} aria-label={t.favorites} style={{ display: "flex", alignItems: "center", gap: 7,
                   padding: "8px 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>
-                  Favoriler
+                  {t.favorites}
                 </button>
               </span>
               {/* hamburger menu (settings, language, theme) */}
@@ -3751,6 +3775,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
       onClose={function(){ setSelectedMatch(null); }} />}
     {showMenu && <MenuDrawer onClose={function(){ setShowMenu(false); }} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} t={t}
       onSettings={function(){ setShowSettings(true); }} onNews={function(){ setShowNews(true); }} />}
-    <MobileBottomNav active={(mobileSearch || query) ? "arama" : "mac"} onSelect={onMobileNav} />
+    <MobileBottomNav active={(mobileSearch || query) ? "arama" : "mac"} onSelect={onMobileNav} t={t} />
   </div>;
 }
