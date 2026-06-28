@@ -79,7 +79,7 @@ const I18N = {
     squads: "Kadrolar", matchStats: "İstatistik", bench: "Yedekler", lineupSoon: "Kadro henüz açıklanmadı.", noMatchStats: "İstatistik mevcut değil.", possession: "Topla Oynama", shots: "Şut", shotsOn: "İsabetli Şut", shotsOff: "İsabetsiz Şut", corners: "Korner", fouls: "Faul", offsides: "Ofsayt", saves: "Kurtarış", throwIns: "Taç", freeKicks: "Serbest Vuruş", goalKicks: "Kale Vuruşu", yellowCards: "Sarı Kart", redCards: "Kırmızı Kart",
     blockedShots: "Bloke Şut", totalPasses: "Toplam Pas", accuratePasses: "İsabetli Pas",
     substitutions: "Değişiklikler",
-    h2hLabel: "Rekabet Geçmişi", pastMatches: "Geçmiş Maçlar", vsLabel: "vs",
+    h2hLabel: "Rekabet Geçmişi", pastMatches: "Geçmiş Maçlar", vsLabel: "vs", finishedTab: "Biten Maçlar", upcomingTab: "Oynanacak Maçlar",
     searchPlaceholder: "Takım, lig veya oyuncu ara...", noResults: "Sonuç bulunamadı.",
     players: "Oyuncular", noPlayerFound: "Oyuncu bulunamadı.", plProfile: "Oyuncu Profili", teamsLabel: "Takımlar",
     tmProfile: "Takım Profili", founded: "Kuruluş", capacity: "Kapasite", formLabel: "Form", gFor: "Attığı", gAgainst: "Yediği",
@@ -111,7 +111,7 @@ const I18N = {
     squads: "Lineups", matchStats: "Stats", bench: "Bench", lineupSoon: "Lineup not announced yet.", noMatchStats: "Stats not available.", possession: "Possession", shots: "Shots", shotsOn: "Shots on", shotsOff: "Shots off", corners: "Corners", fouls: "Fouls", offsides: "Offsides", saves: "Saves", throwIns: "Throw-ins", freeKicks: "Free kicks", goalKicks: "Goal kicks", yellowCards: "Yellow cards", redCards: "Red cards",
     blockedShots: "Blocked", totalPasses: "Total Passes", accuratePasses: "Accurate Passes",
     substitutions: "Substitutions",
-    h2hLabel: "H2H", pastMatches: "Past Matches", vsLabel: "vs",
+    h2hLabel: "H2H", pastMatches: "Past Matches", vsLabel: "vs", finishedTab: "Finished", upcomingTab: "Upcoming",
     searchPlaceholder: "Search team, league or player...", noResults: "No results.",
     players: "Players", noPlayerFound: "No players found.", plProfile: "Player Profile", teamsLabel: "Teams",
     tmProfile: "Team Profile", founded: "Founded", capacity: "Capacity", formLabel: "Form", gFor: "Goals For", gAgainst: "Goals Against",
@@ -143,7 +143,7 @@ const I18N = {
     squads: "Aufstellung", matchStats: "Statistik", bench: "Bank", lineupSoon: "Aufstellung noch nicht bekannt.", noMatchStats: "Statistik nicht verfugbar.", possession: "Ballbesitz", shots: "Schusse", shotsOn: "Aufs Tor", shotsOff: "Daneben", corners: "Ecken", fouls: "Fouls", offsides: "Abseits", saves: "Paraden", throwIns: "Einwurfe", freeKicks: "Freistosse", goalKicks: "Abstosse", yellowCards: "Gelbe Karten", redCards: "Rote Karten",
     blockedShots: "Geblockt", totalPasses: "Passe gesamt", accuratePasses: "Genaue Passe",
     substitutions: "Wechsel",
-    h2hLabel: "Eins gegen Eins", pastMatches: "Fruhere Spiele", vsLabel: "vs",
+    h2hLabel: "Eins gegen Eins", pastMatches: "Fruhere Spiele", vsLabel: "vs", finishedTab: "Beendet", upcomingTab: "Anstehend",
     searchPlaceholder: "Team, Liga oder Spieler suchen...", noResults: "Keine Ergebnisse.",
     players: "Spieler", noPlayerFound: "Keine Spieler gefunden.", plProfile: "Spielerprofil", teamsLabel: "Teams",
     tmProfile: "Teamprofil", founded: "Gegrundet", capacity: "Kapazitat", formLabel: "Form", gFor: "Tore", gAgainst: "Gegentore",
@@ -1690,15 +1690,17 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
         </button>
       </div>
-      {/* section tabs sit inside the banner so the tube-light reaches them */}
-      <div className="mo-scroll" style={{ position: "relative", display: "flex", gap: 4, overflowX: "auto" }}>
+      {/* section tabs: clean underline style (like a profile tab bar); sit inside the banner so the tube-light reaches them */}
+      <div className="mo-scroll" style={{ position: "relative", display: "flex", gap: 22, overflowX: "auto" }}>
         {[{ id: "standing", label: t.standing }, { id: "scorers", label: t.scorers },
           { id: "fixtures", label: t.fixturesLabel }, { id: "past", label: t.pastMatches }].map(function(tb){
           var a = tab === tb.id;
-          return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ flexShrink: 0, padding: "8px 14px",
-            border: "none", borderRadius: 12, fontSize: 12, fontWeight: a ? 700 : 600, cursor: "pointer",
-            background: a ? COLORS.accentDim : "rgba(0,0,0,0.18)", color: a ? COLORS.accent : COLORS.textPrimary,
-            transition: "all 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>{tb.label}</button>; })}
+          return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ position: "relative", flexShrink: 0, background: "transparent",
+            border: "none", padding: "8px 2px", fontSize: 13, fontWeight: a ? 800 : 600, cursor: "pointer", whiteSpace: "nowrap",
+            color: a ? COLORS.textPrimary : COLORS.textSecondary, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+            {tb.label}
+            {a && <span style={{ position: "absolute", left: 0, right: 0, bottom: -2, height: 2.5, borderRadius: 3, background: COLORS.textPrimary }} />}
+          </button>; })}
       </div>
     </div>
 
@@ -1849,30 +1851,36 @@ function StandoutsRating({ players, t, onClose }) {
 
 // Boxless feed: today's matches then previous days, each under a small date header.
 function DayMatchList({ matches, t, isF1, onOpen }) {
+  var [tab, setTab] = useState("upcoming"); // "upcoming" | "finished"
   if (!matches || matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
-  var hasKeys = matches.some(function(m){ return m.dateKey; });
-  if (!hasKeys) {
-    // no date info (e.g. other sports) -> flat list
-    return <div>{matches.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
-      divider={i < matches.length - 1} onOpen={function(){ onOpen(m); }} />; })}</div>;
-  }
-  var todayKey = isoLocal(new Date());
-  // group ALL matches by day (today, upcoming and past), newest day first
-  var groups = {};
-  matches.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
-  var keys = Object.keys(groups).sort(function(a, b){ return a < b ? 1 : (a > b ? -1 : 0); });
-  function header(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
+
+  // finished: most recent first; upcoming (+ live): live first, then nearest date/time first (top = soonest)
+  var finished = matches.filter(function(m){ return m.status === "finished"; })
+    .slice().sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
+  var upcoming = matches.filter(function(m){ return m.status === "upcoming" || m.status === "live"; })
+    .slice().sort(function(a, b){
+      var la = a.status === "live" ? 0 : 1, lb = b.status === "live" ? 0 : 1;
+      if (la !== lb) return la - lb;
+      return (a.ts || 0) - (b.ts || 0);
+    });
+  var list = tab === "finished" ? finished : upcoming;
+
   return <div>
-    {keys.map(function(k){
-      var list = groups[k];
-      list.sort(function(a, b){ return (a.ts || 0) - (b.ts || 0); });
-      return <div key={k} style={{ marginBottom: 4 }}>
-        <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "16px 6px 8px",
-          borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
-        {list.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+    {/* two-option underline tabs: left = finished, right = upcoming (default) */}
+    <div style={{ display: "flex", gap: 26, borderBottom: "1px solid " + COLORS.border, marginBottom: 6, padding: "0 4px" }}>
+      {[{ id: "finished", label: t.finishedTab }, { id: "upcoming", label: t.upcomingTab }].map(function(tb){
+        var a = tab === tb.id;
+        return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ position: "relative", background: "transparent", border: "none",
+          padding: "12px 2px", fontSize: 13, fontWeight: a ? 800 : 600, cursor: "pointer", fontFamily: FONT,
+          color: a ? COLORS.textPrimary : COLORS.textMuted, transition: "color 0.2s", WebkitTapHighlightColor: "transparent" }}>
+          {tb.label}
+          {a && <span style={{ position: "absolute", left: 0, right: 0, bottom: -1, height: 2.5, borderRadius: 3, background: COLORS.accent }} />}
+        </button>; })}
+    </div>
+    {list.length === 0
+      ? <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>
+      : list.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
           divider={i < list.length - 1} onOpen={function(){ onOpen(m); }} />; })}
-      </div>;
-    })}
   </div>;
 }
 

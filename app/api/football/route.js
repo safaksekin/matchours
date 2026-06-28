@@ -136,13 +136,13 @@ function mapFixture(item, leagueName) {
     away: item.teams.away.name,
     homeLogo: item.teams.home.logo,
     awayLogo: item.teams.away.logo,
-    time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
-    date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }),
+    time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }),
+    date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }),
     league: leagueName || (item.league && item.league.name) || "",
     leagueId: item.league && item.league.id,
     season: item.league && item.league.season,
     status: statusOf(short),
-    dateKey: ymd(d), ts: d.getTime(),
+    dateKey: d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
     stats: {
@@ -181,8 +181,8 @@ export async function GET(request) {
     function fmt(dateStr) {
       const d = new Date(dateStr);
       return {
-        time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
-        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }),
+        time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }),
+        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }),
       };
     }
 
@@ -595,8 +595,8 @@ export async function GET(request) {
         var d = g.date ? new Date(typeof g.date === "string" ? g.date : (g.date.start || g.date)) : null;
         out.push({
           id: sport + "-" + (g.id || i), home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
-          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "",
-          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }) : "",
+          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }) : "",
+          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }) : "",
           league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
         });
       });
@@ -762,8 +762,8 @@ export async function GET(request) {
         out.push({
           id: sport + "-" + (g.id || i),
           home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
-          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "",
-          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }) : "",
+          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }) : "",
+          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }) : "",
           league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
         });
       });
@@ -879,7 +879,7 @@ export async function GET(request) {
       else awayWins++;
       const d = new Date(item.fixture.date);
       list.push({
-        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric" }),
+        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Istanbul" }),
         ts: item.fixture.date,
         home: item.teams.home.name,
         away: item.teams.away.name,
