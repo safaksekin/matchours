@@ -2119,7 +2119,7 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
     <button onClick={onClear} style={chip(!selectedId, !selectedId ? "#8A2BE2" : null)}>{t.allLabel}</button>
     {leagues.map(function(l){
       var a = selectedId === l.id;
-      return <button key={l.id} onClick={function(){ onSelect(l); }} style={chip(a, LEAGUE_GLOW[l.id])}>
+      return <button key={l.id} onClick={function(){ onSelect(l); }} style={chip(a, l.id === 203 ? "#1683E0" : LEAGUE_GLOW[l.id])}>
         {leagueLogo(l.id, l.logo) && <img src={leagueLogo(l.id, l.logo)} onError={logoFallback(l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />}
         <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</span>
       </button>; })}
@@ -3809,7 +3809,15 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                   {t.favorites}
                 </button>
               </span>
-              {/* profile (signed in) / sign-in — desktop only; mobile uses the bottom nav */}
+              {/* news (label shown on desktop only) */}
+              <button onClick={function(){ setShowNews(true); pushUrl("/news"); }} aria-label={t.news} style={{ height: 38, padding: "0 11px", borderRadius: 12,
+                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex", gap: 7,
+                color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap",
+                alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v12a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9h-3" /><path d="M7 8h6M7 12h6M7 16h4" /></svg>
+                <span className="mo-only-desktop">{t.news}</span>
+              </button>
+              {/* profile (signed in) / sign-in — desktop only, to the right of news; mobile uses the bottom nav */}
               <span className="mo-only-desktop">
                 {loggedIn
                   ? <button onClick={function(){ setShowProfile(true); }} aria-label="profile" style={{ width: 38, height: 38, borderRadius: 12,
@@ -3824,14 +3832,6 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       {t.signInBtn}
                     </button>}
               </span>
-              {/* news (next to the hamburger) — label shown on desktop only */}
-              <button onClick={function(){ setShowNews(true); pushUrl("/news"); }} aria-label={t.news} style={{ height: 38, padding: "0 11px", borderRadius: 12,
-                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex", gap: 7,
-                color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap",
-                alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v12a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9h-3" /><path d="M7 8h6M7 12h6M7 16h4" /></svg>
-                <span className="mo-only-desktop">{t.news}</span>
-              </button>
               {/* hamburger — far right (settings, language, theme) */}
               <button onClick={function(){ setShowMenu(true); }} aria-label={t.menu} style={{ width: 38, height: 38, borderRadius: 12,
                 background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",
