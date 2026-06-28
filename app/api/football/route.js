@@ -890,6 +890,7 @@ export async function GET(request) {
     (data || []).slice(0, 10).forEach(function (p) {
       const st = (p.statistics && p.statistics[0]) || {};
       list.push({
+        id: p.player && p.player.id,
         name: p.player.name,
         photo: p.player.photo || null,
         team: (st.team && st.team.name) || "",

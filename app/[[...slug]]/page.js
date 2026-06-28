@@ -24,6 +24,13 @@ export async function generateMetadata({ params }) {
     };
   }
 
+  if (sport === "news") {
+    return {
+      title: "Futbol Haberleri — Son Dakika | fikstür.com",
+      description: "Süper Lig, Avrupa ve transfer haberleri; en güncel futbol başlıkları tek ekranda — fikstür.com.",
+      alternates: { canonical: SITE_URL + "/news" },
+    };
+  }
   const sportName = SPORT_NAMES[sport] || prettyFromSlug(sport);
   if (!league) {
     return {
@@ -48,6 +55,8 @@ export default async function Page({ params }) {
   if (parts.length > 2) notFound();
   const sport = parts[0] || "football";
   const league = parts[1] || null;
-  if (parts.length > 0 && !isSport(sport)) notFound();
+  const isNews = sport === "news";
+  if (parts.length > 0 && !isNews && !isSport(sport)) notFound();
+  if (isNews) return <Home initialSport="football" initialLeagueSlug={null} initialView="news" />;
   return <Home initialSport={sport} initialLeagueSlug={league} />;
 }

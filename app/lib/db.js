@@ -9,6 +9,22 @@ export async function getUserId() {
   } catch (e) { return null; }
 }
 
+// ── Username (profiles) ─────────────────────────────────────────────────────
+export async function fetchMyUsername() {
+  const uid = await getUserId();
+  if (!uid) return null;
+  const { data } = await supabase.from("profiles").select("username").eq("id", uid).single();
+  return data ? data.username : null;
+}
+export async function updateUsername(username) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const clean = String(username || "").trim();
+  if (clean.length < 2) return { error: "too_short" };
+  const { error } = await supabase.from("profiles").update({ username: clean }).eq("id", uid);
+  return { error: error || null };
+}
+
 // The signed-in user's own comments (+ total count) for the profile page.
 export async function fetchMyComments(limit) {
   const uid = await getUserId();
