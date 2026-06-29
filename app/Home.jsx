@@ -2112,8 +2112,8 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
     var pa = PRIORITY[a.l.id] || 999, pb = PRIORITY[b.l.id] || 999;
     return pa !== pb ? pa - pb : a.i - b.i;
   }).map(function(x){ return x.l; });
-  function chip(active, glow){ return { flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 12,
-    border: "1px solid " + (glow ? glow + "77" : (active ? COLORS.accent + "66" : COLORS.border)),
+  function chip(active, glow){ return { flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 12,
+    border: "none",
     background: glow ? ("linear-gradient(105deg, " + glow + "3a 0%, " + glow + "14 34%, transparent 74%), " + (active ? COLORS.accentDim : COLORS.card)) : (active ? COLORS.accentDim : COLORS.card),
     color: active ? COLORS.textPrimary : COLORS.textSecondary, fontSize: 12, fontWeight: active ? 800 : 600, cursor: "pointer",
     fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }; }
@@ -3411,6 +3411,14 @@ function AppStyles() {
     ".mo-matchsheet{height:90vh}@media(min-width:900px){.mo-matchsheet{height:97vh}}" +
     ".mo-sporttabs{justify-content:flex-start}@media(min-width:900px){.mo-sporttabs{justify-content:center}}" +
     ".mo-newsgrid{grid-template-columns:repeat(2,1fr)}@media(min-width:700px){.mo-newsgrid{grid-template-columns:repeat(3,1fr)}}" +
+    // light-mode purple navbar: white text/icons/lines, translucent button/input fills, white sport icons
+    ".mo-navlight *{color:#fff!important}" +
+    ".mo-navlight button{background:rgba(255,255,255,0.16)!important}" +
+    ".mo-navlight .mo-sporttabs button{background:transparent!important}" +
+    ".mo-navlight svg{stroke:#fff!important}" +
+    ".mo-navlight input{background:rgba(255,255,255,0.14)!important;border-color:rgba(255,255,255,0.34)!important}" +
+    ".mo-navlight input::placeholder{color:rgba(255,255,255,0.72)!important}" +
+    ".mo-navlight img{filter:brightness(0) invert(1)!important}" +
     "@media(min-width:900px){.mo-only-mobile{display:none}.mo-only-desktop{display:block}}" +
     "@media(max-width:899px){.mo-col-right{order:-1}}" +
     "@media(max-width:899px){body{padding-bottom:calc(58px + env(safe-area-inset-bottom))}}" +
@@ -3763,14 +3771,16 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
 
   var matches = data[(activeSport === "live") ? "football" : activeSport] || [];
   if (activeSport === "live") matches = matches.filter(function(m){ return m.status === "live"; });
+  // light mode: paint the top navbar in the brand purple with white content (.mo-navlight)
+  var headerPurple = theme === "light";
   return <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
     <AppStyles />
 
     <div className="mo-shell" style={{ flex: "1 0 auto" }}>
-      <div className="mo-sticky" style={{ zIndex: 10, background: COLORS.card,
-        boxShadow: "0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)",
+      <div className="mo-sticky" style={{ zIndex: 10, background: headerPurple ? COLORS.accent : COLORS.card,
+        boxShadow: headerPurple ? "0 3px 14px rgba(0,0,0,0.18)" : ("0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)"),
         paddingTop: "max(12px, env(safe-area-inset-top))" }}>
-        <div className="mo-header-inner" style={{ padding: "0 16px 8px" }}>
+        <div className={"mo-header-inner" + (headerPurple ? " mo-navlight" : "")} style={{ padding: "0 16px 8px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center" }}><Logo theme={theme} onHome={goHome} /></div>
             {/* search bar — centered (desktop only; mobile uses the bottom-nav "Ara") */}
@@ -3859,7 +3869,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
               return <SportTab key={sp.id} active={a} icon={sp.icon} label={t.sports[sp.id]} live={sp.id === "live"}
                 onClick={function(e){ changeSport(sp.id, e.currentTarget); }} />; })}
             {/* clean sliding underline under the active tab */}
-            <span aria-hidden style={{ position: "absolute", bottom: 2, height: 3, borderRadius: 3, background: COLORS.accent,
+            <span aria-hidden style={{ position: "absolute", bottom: 2, height: 3, borderRadius: 3, background: headerPurple ? "#fff" : COLORS.accent,
               left: tabInd.left + tabInd.width * 0.22, width: tabInd.width * 0.56, opacity: tabInd.width ? 1 : 0, pointerEvents: "none",
               transition: "left 0.38s cubic-bezier(0.22,1,0.36,1), width 0.38s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease" }} />
           </div>
