@@ -112,6 +112,26 @@ export async function fetchComments(opts) {
   });
 }
 
+// All comments on a match — matched by target_id OR match_id so nobody's comment is missed
+// regardless of how its fields were stored.
+export async function fetchMatchComments(matchId) {
+  const id = String(matchId);
+  const { data } = await supabase.from("comments").select("id, body, created_at, user_id")
+    .eq("target_type", "match")
+    .or("target_id.eq." + id + ",match_id.eq." + id)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  const rows = data || [];
+  if (!rows.length) return [];
+  const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
+  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
+  const nameById = {};
+  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  return rows.map(function (r) {
+    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı" };
+  });
+}
+
 // All comments, newest first, with usernames — for the community/forum feed.
 export async function fetchCommunityFeed(limit) {
   const { data } = await supabase.from("comments")

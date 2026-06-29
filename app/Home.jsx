@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
 import { supabase } from "./lib/supabaseClient";
-import { fetchMyRating, saveRating, fetchComments, addComment as dbAddComment, fetchCommunityFeed,
+import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addComment as dbAddComment, fetchCommunityFeed,
   fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
@@ -468,8 +468,7 @@ function SportTab({ active, onClick, icon, label, live }) {
     <span style={{ position: "relative", zIndex: 1, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>
       {imgOk
         ? <img src={icon} alt="" onError={function(){ setImgOk(false); }}
-            style={{ width: 24, height: 24, objectFit: "contain",
-              filter: active ? "none" : "grayscale(35%) opacity(0.75)", transition: "filter 0.3s ease" }} />
+            style={{ width: 24, height: 24, objectFit: "contain" }} />
         : <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />}
       {live && active && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%",
         background: COLORS.red, animation: "pulse 1.5s infinite" }} />}
@@ -509,7 +508,8 @@ function CommentSection({ match, t }) {
   useEffect(function(){
     if (!ctx) return;
     var cancelled = false;
-    fetchComments({ targetType: "match", targetId: match.id, matchId: match.id }).then(function(rows){
+    // match by target_id OR match_id so every comment on this match shows (not just mine)
+    fetchMatchComments(match.id).then(function(rows){
       if (!cancelled) setList(rows.map(function(c){ return { user: c.user, text: c.text, time: fmtCommentTime(c.created_at) }; }));
     });
     return function(){ cancelled = true; };
@@ -1204,7 +1204,8 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
                 <span style={{ width: 26, textAlign: "center" }}>{t.points}</span>
               </div>
               {gr.rows.map(function(rw, ri){
-                var mine = rw.teamId === match.homeId || rw.teamId === match.awayId;
+                var mine = String(rw.teamId) === String(match.homeId) || String(rw.teamId) === String(match.awayId)
+                  || rw.team === match.home || rw.team === match.away;
                 return <div key={ri} style={{ display: "flex", alignItems: "center", padding: "7px 12px", fontSize: 12,
                   background: mine ? COLORS.accentDim : "transparent",
                   borderBottom: ri < gr.rows.length - 1 ? "1px solid " + COLORS.border : "none" }}>
@@ -1724,9 +1725,21 @@ function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
 // World Cup uses a custom local logo (wc_logo.png in /public); everyone else uses the api-sports logo.
 // Dark-mode white logo overrides for leagues whose official logo is dark/black (invisible on black).
 // Drop the PNGs in /public; until then the <img> onError falls back to the api-sports logo.
-var LEAGUE_LOGO_WHITE = { 39: "/pl-white.PNG", 2: "/ucl-white.PNG", 3: "/uel-white.PNG", 848: "/conf-white.png" };
+var LEAGUE_LOGO_WHITE = { 39: "/pl-white.PNG", 2: "/ucl-white.PNG", 3: "/uel-white.PNG", 848: "/conf-white.png",
+  204: "/trendyol-1-white.png", 205: "/nesine-2-white.png", 552: "/nesine-3-white.png", // Turkey 1./2./3. Lig (dark)
+  79: "/germany-2-white.png", 80: "/germany-3-white.png", 82: "/germany-4-white.png", // Germany 2./3./Frauen (dark)
+  435: "/spain-4-white.png", // Spain Primera RFEF (dark)
+  88: "/netherlands-1-white.png" }; // Eredivisie (dark)
 function leagueLogo(id, fallback) {
   if (String(id) === "1") return "/wc_logo.png";
+  if (String(id) === "61") return "/ligue-1.png"; // custom Ligue 1 logo
+  if (String(id) === "71") return CURRENT_THEME === "dark" ? "/brasil-1-white.png" : "/brasil-1-black.png"; // Brazil Serie A per-theme
+  if (String(id) === "72") return "/brasil-2.png"; // Brazil Serie B (both themes)
+  if (String(id) === "74") return CURRENT_THEME === "dark" ? "/brasil-3-white.png" : "/brasil-3-black.png"; // Brazil Women per-theme
+  if (String(id) === "144") return "/belgium-1.png"; // Jupiler Pro League (both themes)
+  if (String(id) === "254") return "/usa-2.png"; // NWSL Women (both themes)
+  if (String(id) === "78") return CURRENT_THEME === "dark" ? "/bundesliga-white.png" : "/bundesliga-black.png"; // Bundesliga per-theme
+  if (String(id) === "203") return CURRENT_THEME === "dark" ? "/superlig-white.png" : "/superlig-black.png"; // Süper Lig per-theme
   if (CURRENT_THEME === "dark" && LEAGUE_LOGO_WHITE[id]) return LEAGUE_LOGO_WHITE[id];
   return fallback || null;
 }
@@ -2352,18 +2365,19 @@ function MatchModal({ match, isF1, t, onClose }) {
           var awayEv = key.filter(function(e){ return e.side === "away"; });
           function evLine(ev, alignRight){
             var isGoal = ev.type === "goal";
-            // suffix label: penalty (P), own goal (KG), red card (KK)
+            // suffix: penalty (P) / own goal (KG) as text; red card as a small red card icon
+            var isRed = !isGoal; // the summary list contains only goals + red cards
             var label = null;
             if (isGoal && ev.detail === "Penalty") label = "P";
             else if (isGoal && ev.detail === "Own Goal") label = "KG";
-            else if (!isGoal) label = "KK";
-            var labelColor = (!isGoal || ev.detail === "Own Goal") ? COLORS.red : COLORS.accent;
+            var labelColor = (ev.detail === "Own Goal") ? COLORS.red : COLORS.accent;
             return <div style={{ display: "flex", alignItems: "center", gap: 4,
               justifyContent: alignRight ? "flex-end" : "flex-start", marginBottom: 3 }}>
               <span style={{ color: COLORS.textSecondary, fontSize: 11, textAlign: alignRight ? "right" : "left" }}>
                 {alignRight && ev.minute != null && <span style={{ color: COLORS.textMuted }}>{ev.minute}' </span>}
                 {ev.player}
                 {label && <span style={{ color: labelColor, fontWeight: 800 }}> ({label})</span>}
+                {isRed && <span aria-label="kırmızı kart" style={{ display: "inline-block", width: 7, height: 10, borderRadius: 2, background: COLORS.red, verticalAlign: "-1px", marginLeft: 4 }} />}
                 {!alignRight && ev.minute != null && <span style={{ color: COLORS.textMuted }}> {ev.minute}'</span>}
               </span>
             </div>;
@@ -2831,8 +2845,8 @@ function Logo({ theme, onHome }) {
   var src = theme === "dark" ? "/logo_dark.PNG" : "/logo_light.PNG";
   return <div onClick={onHome} role="button" aria-label="home"
     style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-    {ok && <img key={theme} src={src} alt="matchours" onError={function(){ setOk(false); }}
-      style={{ height: 30, width: "auto", objectFit: "contain" }} />}
+    {ok && <img key={theme} className="mo-logoimg" src={src} alt="matchours" onError={function(){ setOk(false); }}
+      style={{ width: "auto", objectFit: "contain" }} />}
     {!ok && <span style={{ color: COLORS.textPrimary, fontSize: 22, fontWeight: 800, letterSpacing: "-0.8px" }}>
       match<span style={{ color: COLORS.accent }}>ours</span></span>}
   </div>;
@@ -3143,6 +3157,27 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
 }
 
 // Mobile-only bottom navigation (Instagram-style) with a single sliding indicator line.
+// Bottom-nav items that use a custom image instead of the built-in SVG.
+// Drop the files in /public; if missing, it falls back to the SVG.
+var NAV_IMG = { mac: "/nav-mac.png", topluluk: "/community.png" };
+var NAV_TINT = { topluluk: true }; // recolor the shape (grey -> accent) like the SVG icons, instead of its own colors
+// Recolor a transparent PNG via CSS mask: the shape is filled with the element's current text color.
+function MaskIcon({ src, size }) {
+  return <span style={{ width: size || 24, height: size || 24, display: "inline-block", flexShrink: 0, backgroundColor: "currentColor",
+    WebkitMaskImage: "url(" + src + ")", maskImage: "url(" + src + ")", WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
+    WebkitMaskPosition: "center", maskPosition: "center", WebkitMaskSize: "contain", maskSize: "contain" }} />;
+}
+function NavIcon({ id, active, svg }) {
+  var [imgOk, setImgOk] = useState(true);
+  var src = NAV_IMG[id];
+  if (src && NAV_TINT[id]) return <MaskIcon src={src} size={24} />; // grey when idle, accent when active (via button color)
+  if (src && imgOk) {
+    return <img src={src} alt="" onError={function(){ setImgOk(false); }}
+      style={{ width: 24, height: 24, objectFit: "contain", opacity: active ? 1 : 0.5, transition: "opacity 0.2s" }} />;
+  }
+  return svg; // fallback: the default SVG icon
+}
+
 function MobileBottomNav({ active, onSelect, t }) {
   t = t || I18N.tr;
   var ref = useRef(null);
@@ -3165,7 +3200,7 @@ function MobileBottomNav({ active, onSelect, t }) {
     if (id === "mac") return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>;
     if (id === "arama") return <svg {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>;
     if (id === "topluluk") return <svg {...p}><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5" /><path d="M16.5 5.6a3 3 0 0 1 0 5.6M18.5 20c0-2-.7-3.6-2-4.6" /></svg>;
-    if (id === "favoriler") return <svg {...p}><path d="M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2L12 17.8 6.1 20.3l1.3-6.2L2.7 9.5l6.3-.7z" /></svg>;
+    if (id === "favoriler") return <svg {...p}><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>;
     return <svg {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>;
   }
   return <><style>{".mo-bottomnav{display:flex}@media(min-width:900px){.mo-bottomnav{display:none}}"}</style>
@@ -3176,7 +3211,7 @@ function MobileBottomNav({ active, onSelect, t }) {
       return <button key={it[0]} onClick={function(){ onSelect(it[0]); }} style={{ flex: 1, background: "transparent", border: "none",
         cursor: "pointer", padding: "8px 0 7px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
         color: a ? COLORS.accent : COLORS.textMuted, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-        {icon(it[0])}
+        <NavIcon id={it[0]} active={a} svg={icon(it[0])} />
         <span style={{ fontSize: 10, fontWeight: a ? 700 : 600 }}>{it[1]}</span>
       </button>; })}
     <span aria-hidden style={{ position: "absolute", top: 0, height: 2.5, borderRadius: 3, background: COLORS.accent,
@@ -3408,6 +3443,7 @@ function AppStyles() {
     ".mo-matchsheet{height:90vh}@media(min-width:900px){.mo-matchsheet{height:97vh}}" +
     ".mo-sporttabs{justify-content:flex-start}@media(min-width:900px){.mo-sporttabs{justify-content:center}}" +
     ".mo-newsgrid{grid-template-columns:repeat(2,1fr)}@media(min-width:700px){.mo-newsgrid{grid-template-columns:repeat(3,1fr)}}" +
+    ".mo-logoimg{height:30px}@media(min-width:900px){.mo-logoimg{height:38px}}" +
     // light-mode purple navbar: white text/icons/lines, translucent button/input fills, white sport icons
     ".mo-navlight *{color:#fff!important}" +
     ".mo-navlight button{background:rgba(255,255,255,0.16)!important}" +
@@ -3431,11 +3467,11 @@ function AppStyles() {
     ".mo-header-inner{max-width:560px;margin:0 auto;width:100%}" +
     "@media(min-width:900px){" +
       ".mo-container{max-width:1100px;padding-left:24px;padding-right:24px}" +
-      ".mo-header-inner{max-width:1100px;padding-left:24px;padding-right:24px}" +
+      ".mo-header-inner{max-width:none;padding-left:24px;padding-right:24px}" +
       ".mo-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;align-items:start}" +
     "}" +
     "@media(min-width:1300px){" +
-      ".mo-container{max-width:1280px}.mo-header-inner{max-width:1280px}" +
+      ".mo-container{max-width:1280px}" +
       ".mo-grid{grid-template-columns:repeat(3,1fr)}" +
     "}"}</style>;
 }
@@ -3778,10 +3814,11 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
         boxShadow: headerPurple ? "0 3px 14px rgba(0,0,0,0.18)" : ("0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)"),
         paddingTop: "max(12px, env(safe-area-inset-top))" }}>
         <div className={"mo-header-inner" + (headerPurple ? " mo-navlight" : "")} style={{ padding: "0 16px 8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center", marginBottom: 8 }}>
             <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center" }}><Logo theme={theme} onHome={goHome} /></div>
-            {/* search bar — centered (desktop only; mobile uses the bottom-nav "Ara") */}
-            <div className="mo-only-desktop" style={{ position: "relative", width: 320, maxWidth: "100%", flexShrink: 1, minWidth: 0 }}>
+            {/* search — absolutely centered on the page (desktop only); logo grows to push the buttons to the right edge */}
+            <div className="mo-only-desktop" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", width: 340, maxWidth: "calc(100% - 520px)", zIndex: 1 }}>
+            <div style={{ position: "relative" }}>
               <span style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke={searchFocus ? COLORS.accent : COLORS.textMuted}
                   strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "stroke 0.3s ease" }}>
@@ -3799,20 +3836,21 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                 background: COLORS.card, color: COLORS.textSecondary, cursor: "pointer", fontSize: 13, lineHeight: 1,
                 WebkitTapHighlightColor: "transparent" }}>×</button>}
             </div>
-            <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+            </div>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
               {/* community (desktop only — mobile uses the bottom-nav "Topluluk") */}
               <span className="mo-only-desktop">
                 <button onClick={function(){ setShowCommunity(true); }} aria-label={t.community} style={{ display: "flex", alignItems: "center", gap: 7,
-                  padding: "8px 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
+                  height: 38, padding: "0 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5" /><path d="M16.5 5.6a3 3 0 0 1 0 5.6M18.5 20c0-2-.7-3.6-2-4.6" /></svg>
+                  <MaskIcon src={NAV_IMG.topluluk} size={18} />
                   {t.community}
                 </button>
               </span>
               {/* favorites (desktop only — mobile uses the bottom-nav "Favoriler") */}
               <span className="mo-only-desktop">
                 <button onClick={function(){ setShowFavorites(true); }} aria-label={t.favorites} style={{ display: "flex", alignItems: "center", gap: 7,
-                  padding: "8px 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
+                  height: 38, padding: "0 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>
                   {t.favorites}
@@ -3834,7 +3872,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                     </button>
-                  : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 12,
+                  : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 12,
                       background: COLORS.accent, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
                       fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
