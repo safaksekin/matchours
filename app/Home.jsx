@@ -3162,7 +3162,7 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
 // Bottom-nav items that use a custom image instead of the built-in SVG.
 // Drop the files in /public; if missing, it falls back to the SVG.
 var NAV_IMG = { mac: "/nav-mac.png", topluluk: "/community.png" };
-var NAV_TINT = { topluluk: true }; // recolor the shape (grey -> accent) like the SVG icons, instead of its own colors
+var NAV_TINT = { mac: true, topluluk: true }; // recolor the shape (grey -> accent) like the SVG icons, instead of its own colors
 // Recolor a transparent PNG via CSS mask: the shape is filled with the element's current text color.
 function MaskIcon({ src, size }) {
   return <span style={{ width: size || 24, height: size || 24, display: "inline-block", flexShrink: 0, backgroundColor: "currentColor",
