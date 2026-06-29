@@ -1180,12 +1180,8 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
 
   return <div style={{ background: "transparent", padding: "14px 18px 18px",
     }}>
-    <div style={{ display: "flex", gap: 4, marginBottom: 16, overflowX: "auto" }}>
-      {tabs.map(function(tb){ var a = tab === tb.id;
-        return <button key={tb.id} onClick={function(){ setTab(tb.id); }} style={{ flexShrink: 0, padding: "7px 14px",
-          border: "none", borderRadius: 11, fontSize: 12, fontWeight: a ? 700 : 600, cursor: "pointer",
-          background: a ? COLORS.accentDim : "transparent", color: a ? COLORS.accent : COLORS.textSecondary,
-          transition: "all 0.2s", fontFamily: FONT }}>{tb.label}</button>; })}
+    <div style={{ marginBottom: 12 }}>
+      <UnderlineTabs indicatorColor={COLORS.accent} tabs={tabs} active={tab} onChange={setTab} />
     </div>
 
     {tab === "info" && <div>
@@ -2300,10 +2296,11 @@ function MatchModal({ match, isF1, t, onClose }) {
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
 
-      {/* modal header: drag handle + teams + score + close. Opaque (no backdrop blur) so scrolling stays smooth. */}
+      {/* modal header: drag handle + teams + score + close. Glassy (frosted) with a visible purple tint. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        background: "linear-gradient(180deg, rgba(106,69,230,0.16), rgba(106,69,230,0.06)), var(--card)",
-        borderBottom: "1px solid rgba(106,69,230,0.18)",
+        background: "linear-gradient(180deg, rgba(106,69,230,0.26), rgba(106,69,230,0.10))",
+        backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
+        borderBottom: "1px solid rgba(106,69,230,0.22)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
