@@ -3223,12 +3223,14 @@ function MobileBottomNav({ active, onSelect, t }) {
 }
 
 // One forum post (Twitter-style): avatar, @username · time, body, and a quoted match/player card.
-function CommentCard({ c, onOpenMatch, t }) {
+function CommentCard({ c, onOpenMatch, t, liveLookup }) {
   var name = c.user || "kullanıcı";
   var initial = (name && name[0]) ? name[0].toUpperCase() : "?";
   var isPlayer = c.target_type === "player";
   var meta = c.meta || null;
-  var m = isPlayer ? (meta && meta.match) : meta; // match snapshot to render / open
+  var snap = isPlayer ? (meta && meta.match) : meta; // match snapshot stored at comment time
+  // prefer the live version from the current feed so a live match isn't frozen at comment time
+  var m = (liveLookup && snap && snap.id != null && liveLookup(snap.id)) || snap;
   var canOpen = !!(onOpenMatch && m && m.id != null);
   function open(){ if (canOpen) onOpenMatch(Object.assign({ stats: {} }, m)); }
   var quoteBase = { background: COLORS.card, borderRadius: 12, border: "1px solid " + COLORS.border,
@@ -3312,7 +3314,7 @@ function CommentCard({ c, onOpenMatch, t }) {
 }
 
 // Community / forum page: every comment, newest first.
-function CommunityPage({ onBack, t, onOpenMatch }) {
+function CommunityPage({ onBack, t, onOpenMatch, liveLookup }) {
   var [list, setList] = useState(null);
   useEffect(function(){
     var cancelled = false;
@@ -3325,7 +3327,7 @@ function CommunityPage({ onBack, t, onOpenMatch }) {
         ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.loading}</div>
         : list.length === 0
           ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.noComments}</div>
-          : list.map(function(c){ return <CommentCard key={c.id} c={c} onOpenMatch={onOpenMatch} t={t} />; })}
+          : list.map(function(c){ return <CommentCard key={c.id} c={c} onOpenMatch={onOpenMatch} t={t} liveLookup={liveLookup} />; })}
     </div>
   </SimplePage>;
 }
@@ -3796,7 +3798,19 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>Yakında.</div>
   </SimplePage>
     <MobileBottomNav active="favoriler" onSelect={onMobileNav} t={t} /></>;
-  if (showCommunity) return <><AppStyles /><CommunityPage onBack={function(){ setShowCommunity(false); }} t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} />
+  // a community snapshot freezes the score/status at comment time; prefer the live version from the current feed
+  function freshMatch(id) {
+    if (id == null) return null;
+    var sid = String(id);
+    var keys = Object.keys(data || {});
+    for (var i = 0; i < keys.length; i++) {
+      var arr = data[keys[i]] || [];
+      for (var j = 0; j < arr.length; j++) { if (String(arr[j].id) === sid) return arr[j]; }
+    }
+    return null;
+  }
+  if (showCommunity) return <><AppStyles /><CommunityPage onBack={function(){ setShowCommunity(false); }} t={t} liveLookup={freshMatch}
+      onOpenMatch={function(m){ setSelectedMatch(freshMatch(m.id) || m); }} />
     <MobileBottomNav active="topluluk" onSelect={onMobileNav} t={t} />
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
   if (showFavorites) return <><AppStyles />
