@@ -116,13 +116,13 @@ const THEME_VARS = {
     "--modalBorder": "rgba(255,255,255,0.6)",
   },
   dark: {
-    "--bg": "#000000", "--card": "#0E0E0E", "--cardAlt": "#181818",
-    "--border": "#2A2A2A", "--accent": "#4D51EA", "--accentDim": "rgba(77,81,234,0.18)",
-    "--teal": "#181818", "--mint": "#101010",
+    "--bg": "#0A0A0C", "--card": "#1B1B1F", "--cardAlt": "#26262B",
+    "--border": "#34343A", "--accent": "#4D51EA", "--accentDim": "rgba(77,81,234,0.18)",
+    "--teal": "#26262B", "--mint": "#161618",
     "--purple": "#3FD176", "--purpleDim": "rgba(63,209,118,0.18)",
     "--textPrimary": "#E8EAFB", "--textSecondary": "#A8AECE", "--textMuted": "#767C9E",
     "--red": "#FF0000", "--yellow": "#F8DE22",
-    "--modalGrad": "linear-gradient(180deg, rgba(18,18,18,0.92), rgba(0,0,0,0.96))",
+    "--modalGrad": "linear-gradient(180deg, rgba(30,30,34,0.92), rgba(14,14,16,0.96))",
     "--modalBorder": "rgba(255,255,255,0.08)",
   },
 };
@@ -2087,15 +2087,17 @@ function DayMatchList({ matches, t, isF1, onOpen }) {
     <UnderlineTabs indicatorColor={COLORS.accent} tabs={[{ id: "finished", label: t.finishedTab }, { id: "upcoming", label: t.upcomingTab }]} active={tab} onChange={setTab} />
     {keys.length === 0
       ? <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>
-      : keys.map(function(k){
-          var items = groups[k].slice().sort(function(a, b){ return ascending ? ((a.ts || 0) - (b.ts || 0)) : ((b.ts || 0) - (a.ts || 0)); });
-          return <div key={k} style={{ marginBottom: 4 }}>
-            <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "16px 6px 8px",
-              borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
-            {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
-              divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
-          </div>;
-        })}
+      : <div style={{ background: COLORS.card, borderRadius: 18, padding: "2px 10px 8px" }}>
+          {keys.map(function(k){
+            var items = groups[k].slice().sort(function(a, b){ return ascending ? ((a.ts || 0) - (b.ts || 0)) : ((b.ts || 0) - (a.ts || 0)); });
+            return <div key={k} style={{ marginBottom: 4 }}>
+              <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "14px 4px 8px",
+                borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
+              {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+                divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
+            </div>;
+          })}
+        </div>}
   </div>;
 }
 
@@ -2105,7 +2107,7 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
   (groups || []).forEach(function(g){ (g.leagues || []).forEach(function(l){ leagues.push(l); }); });
   if (!leagues.length) return null;
   // surface the big competitions first; everything else keeps its original order
-  var PRIORITY = { 2: 1, 3: 2, 848: 3, 39: 4, 203: 5, 140: 6, 78: 7, 135: 8, 61: 9 };
+  var PRIORITY = { 1: 1, 2: 2, 3: 3, 848: 4, 39: 5, 203: 6, 140: 7, 78: 8, 135: 9, 61: 10 };
   leagues = leagues.map(function(l, i){ return { l: l, i: i }; }).sort(function(a, b){
     var pa = PRIORITY[a.l.id] || 999, pb = PRIORITY[b.l.id] || 999;
     return pa !== pb ? pa - pb : a.i - b.i;
