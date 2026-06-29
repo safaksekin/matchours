@@ -191,6 +191,7 @@ function mapFixture(item, leagueName) {
     league: leagueName || (item.league && item.league.name) || "",
     leagueId: item.league && item.league.id,
     season: item.league && item.league.season,
+    round: (item.league && item.league.round) || null,
     status: statusOf(short),
     dateKey: d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
@@ -778,7 +779,7 @@ export async function GET(request) {
 
     if (sport === "football" || sport === "live") {
       const today = new Date();
-      const from = new Date(today); from.setDate(today.getDate() - 3);
+      const from = new Date(today); from.setDate(today.getDate() - 8);
       const to = new Date(today); to.setDate(today.getDate() + 30);
       const dFrom = from.toISOString().split("T")[0];
       const dTo = to.toISOString().split("T")[0];
@@ -786,10 +787,15 @@ export async function GET(request) {
       if (!data || !data.length) data = await apiGet("/fixtures?league=" + league + "&season=" + season + "&last=20", 120);
       // current season not started yet -> show last season's recent matches
       if (!data || !data.length) data = await apiGet("/fixtures?league=" + league + "&season=" + (parseInt(season, 10) - 1) + "&last=20", 600);
-      const out = (data || []).slice(0, 40).map(function (item) { return mapFixture(item, item.league && item.league.name); });
+      const out = (data || []).map(function (item) { return mapFixture(item, item.league && item.league.name); });
       const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
-      out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
-      return Response.json({ matches: out });
+      // live + upcoming (soonest first) before finished (newest first), THEN cap — so upcoming is never cut off
+      out.sort(function (a, b) {
+        const ra = rank(a.status), rb = rank(b.status);
+        if (ra !== rb) return ra - rb;
+        return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
+      });
+      return Response.json({ matches: out.slice(0, 80) });
     }
 
     const HOSTS = { basketball: "https://v1.basketball.api-sports.io", volleyball: "https://v1.volleyball.api-sports.io" };

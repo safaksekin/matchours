@@ -1065,6 +1065,9 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
   var [h2hList, setH2hList] = useState([]);
   var [h2hLoading, setH2hLoading] = useState(false);
   var [standings, setStandings] = useState(null); // { home:{form,rank,points}, away:{...} }
+  var [aiText, setAiText] = useState(null);
+  var [aiLoading, setAiLoading] = useState(false);
+  var [aiErr, setAiErr] = useState(null);
   var [stLoading, setStLoading] = useState(false);
   var [scorers, setScorers] = useState(null);
   var [scLoading, setScLoading] = useState(false);
@@ -1150,6 +1153,35 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
 
   // groups (array) that contain either team; usually one shared group
   var stGroups = Array.isArray(standings) ? standings : [];
+  // AI pre-match preview: gather the loaded context (standings + form + H2H) and ask /api/preview
+  function loadPreview() {
+    if (aiLoading) return;
+    setAiLoading(true); setAiErr(null);
+    var h2hP = (h2h && h2h.total != null && h2h.total > 0) ? Promise.resolve(h2h)
+      : (match.homeId && match.awayId
+          ? fetch("/api/football?mode=h2h&home=" + match.homeId + "&away=" + match.awayId).then(function(r){ return r.json(); }).then(function(j){ return j.h2h || null; }).catch(function(){ return null; })
+          : Promise.resolve(null));
+    h2hP.then(function(hh){
+      function rowFor(id){
+        for (var g = 0; g < stGroups.length; g++) {
+          var rows = stGroups[g].rows || [];
+          for (var i = 0; i < rows.length; i++) {
+            if (String(rows[i].teamId) === String(id)) return { team: locTeam(rows[i].team, t), rank: i + 1, points: rows[i].points, played: rows[i].played };
+          }
+        }
+        return null;
+      }
+      var standRows = [rowFor(match.homeId), rowFor(match.awayId)].filter(Boolean);
+      var ctx = { matchId: match.id, status: match.status, home: locTeam(match.home, t), away: locTeam(match.away, t),
+        league: match.league, date: match.date, standings: standRows,
+        homeForm: Array.isArray(s.homeForm) ? s.homeForm : null, awayForm: Array.isArray(s.awayForm) ? s.awayForm : null,
+        h2h: (hh && hh.total != null) ? hh : null };
+      return fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ctx) }).then(function(r){ return r.json(); });
+    }).then(function(j){
+      if (j && j.text) setAiText(j.text);
+      else setAiErr(j && j.error === "no_key" ? "AI henüz ayarlı değil." : "Analiz oluşturulamadı.");
+    }).catch(function(){ setAiErr("Analiz oluşturulamadı."); }).finally(function(){ setAiLoading(false); });
+  }
   var myGroups = (function(){
     var containing = stGroups.filter(function(gr){
       return gr.rows && gr.rows.some(function(rw){ return rw.teamId === match.homeId || rw.teamId === match.awayId; });
@@ -1187,6 +1219,29 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
     {tab === "info" && <div>
       {!isF1 && <div>
         {stLoading && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "10px 0" }}>{t.loading}</div>}
+
+        {/* AI pre-match preview — only until the match ends */}
+        {match.status !== "finished" && <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ color: COLORS.accent, display: "flex" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /><path d="M19 14l.9 2.4L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.6z" /></svg>
+            </span>
+            <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>Maç Önü Analizi</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 7px", borderRadius: 6 }}>AI</span>
+          </div>
+          <div style={{ background: "rgba(106,69,230,0.13)", border: "1px solid rgba(106,69,230,0.22)", borderRadius: 16, padding: "14px 16px" }}>
+            {aiText
+              ? <div style={{ color: COLORS.textPrimary, fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{aiText}</div>
+              : aiLoading
+                ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "4px 0" }}>Analiz hazırlanıyor…</div>
+                : <button onClick={loadPreview} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px",
+                    background: COLORS.accent, color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /></svg>
+                    Analizi Oluştur
+                  </button>}
+            {aiErr && <div style={{ color: COLORS.textMuted, fontSize: 12, marginTop: aiText ? 8 : 8 }}>{aiErr}</div>}
+          </div>
+        </div>}
 
         {myGroups.length > 0 && <CascadeItem index={0}><div style={{ marginBottom: 16 }}>
           <div style={{ color: COLORS.textSecondary, fontSize: 12, marginBottom: 10, fontWeight: 700 }}>{t.standing}</div>
@@ -1850,13 +1905,44 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
   var glow = LEAGUE_GLOW[league.id] || bannerCol || COLORS.accent;
 
   var upcoming = (matches || []).filter(function(m){ return m.status === "upcoming" || m.status === "live"; });
-  var past = (matches || []).filter(function(m){ return m.status === "finished"; });
+  var allPast = (matches || []).filter(function(m){ return m.status === "finished"; });
+  // past matches shown depend on the competition:
+  //  - European cups (CL/UEL/Conf): only the knockout rounds (quarters/semis/final)
+  //  - World Cup: all recent results
+  //  - domestic leagues: only the last completed matchday (round)
+  var EURO_CUP = { 2: true, 3: true, 848: true };
+  var past;
+  if (EURO_CUP[league.id]) {
+    var ko = allPast.filter(function(m){ return (m.round || "").toLowerCase().indexOf("final") >= 0; }); // quarter-/semi-finals + final
+    past = ko.length ? ko : allPast;
+  } else if (String(league.id) === "1") {
+    past = allPast;
+  } else {
+    var latest = null;
+    allPast.forEach(function(m){ if (m.ts != null && (!latest || m.ts > latest.ts)) latest = m; });
+    var lastRound = latest && latest.round;
+    past = lastRound ? allPast.filter(function(m){ return m.round === lastRound; }) : allPast;
+  }
   var group0 = (standings && standings.length) ? standings[0] : null;
   var sTitle = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px", margin: "0 0 10px" };
   var box = { background: COLORS.card, borderRadius: 18, border: "none", padding: 8 };
-  function matchList(list){
-    return <div className="mo-scroll" style={Object.assign({}, box, { maxHeight: "62vh", overflowY: "auto" })}>{list.map(function(m, i){
-      return <MatchRow key={m.id} match={m} isF1={false} t={t} divider={i < list.length - 1} onOpen={function(){ onOpenMatch(m); }} />; })}</div>;
+  // date-grouped match list with day separators (like the main feed); ascending=true -> soonest day first
+  function groupedList(list, ascending){
+    var todayKey = isoLocal(new Date());
+    function header(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
+    var groups = {};
+    list.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
+    var keys = Object.keys(groups).sort(function(a, b){ return ascending ? (a < b ? -1 : a > b ? 1 : 0) : (a < b ? 1 : a > b ? -1 : 0); });
+    return <div className="mo-scroll" style={Object.assign({}, box, { maxHeight: "62vh", overflowY: "auto", padding: "2px 10px 8px" })}>
+      {keys.map(function(k){
+        var items = groups[k].slice().sort(function(a, b){ return ascending ? ((a.ts || 0) - (b.ts || 0)) : ((b.ts || 0) - (a.ts || 0)); });
+        return <div key={k} style={{ marginBottom: 4 }}>
+          <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "14px 4px 8px",
+            borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
+          {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={false} t={t} divider={i < items.length - 1} onOpen={function(){ onOpenMatch(m); }} />; })}
+        </div>;
+      })}
+    </div>;
   }
 
   return <div style={{ minWidth: 0, animation: "moFade 0.26s ease both" }}>
@@ -1964,11 +2050,11 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
         : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{scorers === null ? t.loading : "—"}</div>)}
 
       {tab === "fixtures" && (matchesLoading ? <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textSecondary, fontSize: 14 }}>{t.loading}</div>
-        : upcoming.length > 0 ? matchList(upcoming)
+        : upcoming.length > 0 ? groupedList(upcoming, true)
         : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>)}
 
       {tab === "past" && (matchesLoading ? <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textSecondary, fontSize: 14 }}>{t.loading}</div>
-        : past.length > 0 ? matchList(past)
+        : past.length > 0 ? groupedList(past, false)
         : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>)}
     </SlidePanel>
   </div>;
