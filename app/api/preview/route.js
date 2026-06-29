@@ -12,8 +12,11 @@ const SB_ON = !!(SB_URL && SB_KEY);
 const SYSTEM =
   "Sen deneyimli bir futbol maç önü analistisin. Sana verilen verilere dayanarak, " +
   "taraftarlar için KISA (en fazla 4-5 cümle), akıcı ve Türkçe bir maç önü analizi yaz. " +
-  "Sadece verilen verilerden çıkarım yap, uydurma istatistik verme. Kesin skor tahmini yapma; " +
-  "hangi takımın daha avantajlı göründüğünü, form ve puan durumunu, varsa H2H eğilimini vurgula. " +
+  "SAYISAL verilere dayan: gol ortalamaları, averaj, puan farkı, form ve H2H skorları gibi " +
+  "SOMUT rakamları cümle içinde kullan. Sadece verilen verilerden çıkarım yap, uydurma istatistik verme. " +
+  "Kesin skor tahmini yapma; hangi takımın daha avantajlı göründüğünü gerekçeleriyle vurgula. " +
+  "Her analizi FARKLI ve özgün bir cümleyle başlat; klişe/kalıp girişlerden " +
+  "('X ve Y karşı karşıya geliyor', 'dev mücadele', 'kritik maç' gibi) KESİNLİKLE kaçın. " +
   "Madde madde değil, tek akıcı paragraf yaz. Veriler eksikse elindekiyle yorum yap.";
 
 function sbHdr() { return { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }; }
@@ -49,8 +52,26 @@ function buildContext(b) {
     L.push("Puan durumu:");
     b.standings.forEach(function (r) {
       L.push("- " + r.team + ": " + (r.rank != null ? r.rank + ". sıra" : "") +
-        (r.points != null ? ", " + r.points + " puan" : "") + (r.played != null ? ", " + r.played + " maç" : ""));
+        (r.points != null ? ", " + r.points + " puan" : "") +
+        (r.played != null ? ", O" + r.played : "") +
+        (r.win != null ? " (" + r.win + "G " + r.draw + "B " + r.lose + "M)" : "") +
+        (r.gd != null ? ", averaj " + (r.gd > 0 ? "+" + r.gd : r.gd) : ""));
     });
+  }
+  if (b.season && (b.season.home || b.season.away)) {
+    const sLine = function (name, sx) {
+      if (!sx) return null;
+      const p = [];
+      if (sx.played) p.push(sx.played + " maç");
+      if (sx.wins != null) p.push(sx.wins + "G " + (sx.draws || 0) + "B " + (sx.loses || 0) + "M");
+      if (sx.goalsFor != null && sx.played) p.push("maç başı " + (sx.goalsFor / sx.played).toFixed(2) + " gol attı");
+      if (sx.goalsAgainst != null && sx.played) p.push("maç başı " + (sx.goalsAgainst / sx.played).toFixed(2) + " gol yedi");
+      if (sx.cleanSheets != null) p.push(sx.cleanSheets + " maçta kalesini gole kapadı");
+      return p.length ? ("- " + name + ": " + p.join(", ")) : null;
+    };
+    L.push("Sezon istatistikleri:");
+    const sh = sLine(b.home, b.season.home); if (sh) L.push(sh);
+    const sa = sLine(b.away, b.season.away); if (sa) L.push(sa);
   }
   if (Array.isArray(b.homeForm) && b.homeForm.length) L.push((b.home || "Ev") + " son maçlar: " + b.homeForm.join(" "));
   if (Array.isArray(b.awayForm) && b.awayForm.length) L.push((b.away || "Deplasman") + " son maçlar: " + b.awayForm.join(" "));
@@ -77,22 +98,29 @@ export async function POST(request) {
   if (!KEY) return Response.json({ error: "no_key", text: "" });
 
   const prompt = SYSTEM + "\n\nVeriler:\n" + buildContext(b);
-  let text = "";
-  try {
+  async function callGemini() {
     const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent?key=" + KEY, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 400, topP: 0.9 },
+        generationConfig: { temperature: 1.0, maxOutputTokens: 450, topP: 0.95, topK: 64 },
       }),
     });
-    const j = await r.json();
-    if (j && j.error) return Response.json({ error: "gemini", detail: j.error.message || "", text: "" });
-    text = (((((j || {}).candidates || [])[0] || {}).content || {}).parts || [])[0];
-    text = (text && text.text) || "";
-    text = text.trim();
+    return await r.json();
+  }
+  let j;
+  try {
+    j = await callGemini();
+    // retry once on transient overload (not on quota/key errors)
+    if (j && j.error && /high demand|overload|unavailable|try again|temporar|5\d\d/i.test(j.error.message || "")) {
+      await new Promise(function (res) { setTimeout(res, 1500); });
+      j = await callGemini();
+    }
   } catch (e) { return Response.json({ error: "gemini_fetch", text: "" }); }
+  if (j && j.error) return Response.json({ error: "gemini", detail: j.error.message || "", text: "" });
+  let text = (((((j || {}).candidates || [])[0] || {}).content || {}).parts || [])[0];
+  text = ((text && text.text) || "").trim();
   if (!text) return Response.json({ error: "empty", text: "" });
 
   // upcoming previews are stable for a while; finished -> keep long

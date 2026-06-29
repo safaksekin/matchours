@@ -1187,14 +1187,18 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
         for (var g = 0; g < stGroups.length; g++) {
           var rows = stGroups[g].rows || [];
           for (var i = 0; i < rows.length; i++) {
-            if (String(rows[i].teamId) === String(id)) return { team: locTeam(rows[i].team, t), rank: i + 1, points: rows[i].points, played: rows[i].played };
+            var rw = rows[i];
+            if (String(rw.teamId) === String(id)) return { team: locTeam(rw.team, t), rank: i + 1, played: rw.played,
+              win: rw.win, draw: rw.draw, lose: rw.lose, gd: rw.gd, points: rw.points };
           }
         }
         return null;
       }
       var standRows = [rowFor(match.homeId), rowFor(match.awayId)].filter(Boolean);
+      var recentH2H = (h2hList || []).slice(0, 5).map(function(x){ return x.home + " " + x.score + " " + x.away + (x.date ? " (" + x.date + ")" : ""); });
+      var season = (detail && detail.season && (detail.season.home || detail.season.away)) ? { home: detail.season.home, away: detail.season.away } : null;
       var ctx = { matchId: match.id, status: match.status, home: locTeam(match.home, t), away: locTeam(match.away, t),
-        league: match.league, date: match.date, standings: standRows,
+        league: match.league, date: match.date, standings: standRows, season: season, recentH2H: recentH2H,
         homeForm: Array.isArray(s.homeForm) ? s.homeForm : null, awayForm: Array.isArray(s.awayForm) ? s.awayForm : null,
         h2h: (hh && hh.total != null) ? hh : null };
       return fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ctx) }).then(function(r){ return r.json(); });
@@ -1213,7 +1217,13 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
       return hasH && hasA;
     });
     if (both.length > 0) { both.sort(function(a,b){ return a.rows.length - b.rows.length; }); return [both[0]]; }
-    if (containing.length > 0) { containing.sort(function(a,b){ return a.rows.length - b.rows.length; }); return [containing[0]]; }
+    // teams in different groups (e.g. World Cup knockout) -> show each team's group
+    var hGroup = containing.filter(function(gr){ return gr.rows.some(function(rw){ return rw.teamId === match.homeId; }); })[0];
+    var aGroup = containing.filter(function(gr){ return gr.rows.some(function(rw){ return rw.teamId === match.awayId; }); })[0];
+    var out = [];
+    if (hGroup) out.push(hGroup);
+    if (aGroup && aGroup !== hGroup) out.push(aGroup);
+    if (out.length > 0) return out;
     if (stGroups.length === 1) return stGroups;
     return [];
   })();
