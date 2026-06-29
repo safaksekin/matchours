@@ -63,7 +63,6 @@ function buildContext(b) {
 }
 
 export async function POST(request) {
-  if (!KEY) return Response.json({ error: "no_key", text: "" });
   let b;
   try { b = await request.json(); } catch (e) { return Response.json({ error: "bad_request", text: "" }); }
   const matchId = String(b.matchId || "");
@@ -73,6 +72,9 @@ export async function POST(request) {
     const hit = await cacheGet(cacheKey);
     if (hit && hit.text) return Response.json({ text: hit.text, cached: true });
   }
+  // peek = only return a cached preview; never generate (used to auto-show on open)
+  if (b.peek) return Response.json({ text: "" });
+  if (!KEY) return Response.json({ error: "no_key", text: "" });
 
   const prompt = SYSTEM + "\n\nVeriler:\n" + buildContext(b);
   let text = "";

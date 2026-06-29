@@ -54,6 +54,16 @@ function FavButton({ kind, refId, name, image, meta, size }) {
   </button>;
 }
 
+// Track (per device) which matches THIS user generated an AI preview for, so it auto-shows
+// for them on reopen — but other users still see the "generate" button (which serves the cache).
+function aiSeen(id) { try { return (localStorage.getItem("mo_ai_seen") || "").split(",").indexOf(String(id)) >= 0; } catch (e) { return false; } }
+function aiMarkSeen(id) {
+  try {
+    var arr = (localStorage.getItem("mo_ai_seen") || "").split(",").filter(Boolean);
+    if (arr.indexOf(String(id)) < 0) { arr.push(String(id)); localStorage.setItem("mo_ai_seen", arr.slice(-300).join(",")); }
+  } catch (e) {}
+}
+
 // Minimal match snapshot stored with a comment so the feed can render a quote card AND re-open the match.
 function matchSnap(m) {
   if (!m) return null;
@@ -1105,6 +1115,17 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
       .finally(function(){ setH2hLoading(false); });
   }, [tab]);
 
+  // auto-show an already-cached AI preview on open — but only for the user who generated it
+  useEffect(function(){
+    if (isF1 || match.status === "finished" || !match.id || !aiSeen(match.id)) return;
+    var cancelled = false;
+    fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, peek: true }) })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (!cancelled && j && j.text) setAiText(j.text); })
+      .catch(function(){});
+    return function(){ cancelled = true; };
+  }, []);
+
   // lazy: scorers
   useEffect(function(){
     if (tab !== "scorers" || scorers || !match.leagueId) return;
@@ -1178,7 +1199,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
         h2h: (hh && hh.total != null) ? hh : null };
       return fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ctx) }).then(function(r){ return r.json(); });
     }).then(function(j){
-      if (j && j.text) setAiText(j.text);
+      if (j && j.text) { setAiText(j.text); aiMarkSeen(match.id); }
       else setAiErr(j && j.error === "no_key" ? "AI henüz ayarlı değil." : "Analiz oluşturulamadı.");
     }).catch(function(){ setAiErr("Analiz oluşturulamadı."); }).finally(function(){ setAiLoading(false); });
   }
