@@ -1736,6 +1736,7 @@ function leagueLogo(id, fallback) {
   if (String(id) === "71") return CURRENT_THEME === "dark" ? "/brasil-1-white.png" : "/brasil-1-black.png"; // Brazil Serie A per-theme
   if (String(id) === "72") return "/brasil-2.png"; // Brazil Serie B (both themes)
   if (String(id) === "74") return CURRENT_THEME === "dark" ? "/brasil-3-white.png" : "/brasil-3-black.png"; // Brazil Women per-theme
+  if (String(id) === "89") return "/netherlands-2.png"; // Eerste Divisie (both themes)
   if (String(id) === "144") return "/belgium-1.png"; // Jupiler Pro League (both themes)
   if (String(id) === "254") return "/usa-2.png"; // NWSL Women (both themes)
   if (String(id) === "78") return CURRENT_THEME === "dark" ? "/bundesliga-white.png" : "/bundesliga-black.png"; // Bundesliga per-theme
@@ -2468,7 +2469,8 @@ function SearchDiscovery({ t, onOpenLeague, onOpenTeam, onOpenPlayer }) {
           return <button key={l.id} onClick={function(){ onOpenLeague(l); }}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, padding: "12px 6px", background: COLORS.card,
               border: "none", borderRadius: 16, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-            <img src={"https://media.api-sports.io/football/leagues/" + l.id + ".png"} alt="" onError={function(e){ e.currentTarget.style.visibility = "hidden"; }}
+            <img src={leagueLogo(l.id, "https://media.api-sports.io/football/leagues/" + l.id + ".png")} alt=""
+              onError={logoFallback("https://media.api-sports.io/football/leagues/" + l.id + ".png")}
               style={{ width: 34, height: 34, objectFit: "contain" }} />
             <span style={{ color: COLORS.textSecondary, fontSize: 10.5, fontWeight: 600, textAlign: "center", lineHeight: 1.2,
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{l.name}</span>
@@ -3576,7 +3578,12 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   }
 
   function changeSport(id, el) {
-    if (id === activeSport) return;
+    // tapping a sport always leaves the mobile search screen and shows that sport's feed
+    setMobileSearch(false); setQuery("");
+    if (id === activeSport) {
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" }); } catch (e) {} }
+      return;
+    }
     var fromIdx = SPORT_TABS.findIndex(function(s){ return s.id === activeSport; });
     var toIdx = SPORT_TABS.findIndex(function(s){ return s.id === id; });
     setSlideDir(toIdx > fromIdx ? 1 : -1);
