@@ -107,7 +107,7 @@ const COLORS = {
 const THEME_VARS = {
   light: {
     "--bg": "#F1F2F6", "--card": "#FFFFFF", "--cardAlt": "#E9EBF1",
-    "--border": "#D7DBE8", "--accent": "#3539D4", "--accentDim": "rgba(53,57,212,0.10)",
+    "--border": "#D7DBE8", "--accent": "#5A33CC", "--accentDim": "rgba(90,51,204,0.10)",
     "--teal": "#C9CDDA", "--mint": "#EDEFF3",
     "--purple": "#2FAE55", "--purpleDim": "rgba(47,174,85,0.16)",
     "--textPrimary": "#161A35", "--textSecondary": "#585E82", "--textMuted": "#9AA0C0",
@@ -117,7 +117,7 @@ const THEME_VARS = {
   },
   dark: {
     "--bg": "#0A0A0C", "--card": "#1B1B1F", "--cardAlt": "#26262B",
-    "--border": "#34343A", "--accent": "#4D51EA", "--accentDim": "rgba(77,81,234,0.18)",
+    "--border": "#34343A", "--accent": "#6A45E6", "--accentDim": "rgba(106,69,230,0.18)",
     "--teal": "#26262B", "--mint": "#161618",
     "--purple": "#3FD176", "--purpleDim": "rgba(63,209,118,0.18)",
     "--textPrimary": "#E8EAFB", "--textSecondary": "#A8AECE", "--textMuted": "#767C9E",
@@ -2137,7 +2137,7 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
   return <><div onClick={onOpen}
     onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
     style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", borderRadius: 16, cursor: "pointer",
-      background: hover ? "rgba(77,81,234,0.10)" : "transparent",
+      background: hover ? "rgba(106,69,230,0.10)" : "transparent",
       transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)", WebkitTapHighlightColor: "transparent" }}>
     <div style={{ width: 64, flexShrink: 0 }}>
       {isLive ? <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.red, background: COLORS.red + "18",
@@ -2174,7 +2174,7 @@ function MatchCard({ match, isF1, onOpen, t }) {
   var [hover, setHover] = useState(false);
 
   var border = hover ? COLORS.accent + "44" : (isLive ? COLORS.accent + "55" : COLORS.border);
-  var bg = hover ? "rgba(77,81,234,0.04)" : COLORS.card;
+  var bg = hover ? "rgba(106,69,230,0.04)" : COLORS.card;
 
   return <div style={{ background: COLORS.card, borderRadius: 24, overflow: "hidden", marginBottom: 12,
     WebkitTransform: "translateZ(0)", transform: "translateZ(0)",
@@ -2302,8 +2302,8 @@ function MatchModal({ match, isF1, t, onClose }) {
 
       {/* modal header: drag handle + teams + score + close. Opaque (no backdrop blur) so scrolling stays smooth. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        background: "linear-gradient(180deg, rgba(77,81,234,0.16), rgba(77,81,234,0.06)), var(--card)",
-        borderBottom: "1px solid rgba(77,81,234,0.18)",
+        background: "linear-gradient(180deg, rgba(106,69,230,0.16), rgba(106,69,230,0.06)), var(--card)",
+        borderBottom: "1px solid rgba(106,69,230,0.18)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -2371,7 +2371,7 @@ function MatchModal({ match, isF1, t, onClose }) {
               </span>
             </div>;
           }
-          return <div style={{ display: "flex", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(77,81,234,0.18)" }}>
+          return <div style={{ display: "flex", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(106,69,230,0.18)" }}>
             <div style={{ flex: 1 }}>{homeEv.map(function(ev, i){ return <div key={i}>{evLine(ev, false)}</div>; })}</div>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>{awayEv.map(function(ev, i){ return <div key={i} style={{ width: "100%" }}>{evLine(ev, true)}</div>; })}</div>
           </div>;
@@ -2390,7 +2390,7 @@ function PlayerRow({ player, t, onOpen }) {
   var [hover, setHover] = useState(false);
   return <div onClick={onOpen} onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
     style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 16, cursor: "pointer",
-      background: hover ? "rgba(77,81,234,0.10)" : "transparent", transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)",
+      background: hover ? "rgba(106,69,230,0.10)" : "transparent", transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)",
       WebkitTapHighlightColor: "transparent" }}>
     {player.photo
       ? <img src={player.photo} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
@@ -2413,7 +2413,7 @@ function TeamRow({ team, t, onOpen }) {
   var [hover, setHover] = useState(false);
   return <div onClick={onOpen} onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
     style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 16, cursor: "pointer",
-      background: hover ? "rgba(77,81,234,0.10)" : "transparent", transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)",
+      background: hover ? "rgba(106,69,230,0.10)" : "transparent", transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)",
       WebkitTapHighlightColor: "transparent" }}>
     <TeamLogo src={team.logo} name={team.name} size={34} />
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -2590,15 +2590,15 @@ function PlayerModal({ player, t, onClose }) {
 
       {/* header: photo + name + team */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        background: "linear-gradient(180deg, rgba(77,81,234,0.16), rgba(77,81,234,0.06))",
+        background: "linear-gradient(180deg, rgba(106,69,230,0.16), rgba(106,69,230,0.06))",
         backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
-        borderBottom: "1px solid rgba(77,81,234,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
+        borderBottom: "1px solid rgba(106,69,230,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>{t.plProfile}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {player && player.id != null && <FavButton kind="player" refId={player.id} name={name} image={photo} size={34} />}
             <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
-              border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
+              border: "1px solid rgba(106,69,230,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
               fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
               WebkitTapHighlightColor: "transparent" }}>×</button>
           </div>
@@ -2737,15 +2737,15 @@ function TeamModal({ team, t, onClose, onOpenMatch }) {
 
       {/* header */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        background: "linear-gradient(180deg, rgba(77,81,234,0.16), rgba(77,81,234,0.06))",
+        background: "linear-gradient(180deg, rgba(106,69,230,0.16), rgba(106,69,230,0.06))",
         backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
-        borderBottom: "1px solid rgba(77,81,234,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
+        borderBottom: "1px solid rgba(106,69,230,0.18)", padding: "max(16px, env(safe-area-inset-top)) 18px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>{t.tmProfile}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {team && team.id != null && <FavButton kind="team" refId={team.id} name={name} image={logo} size={34} />}
             <button onClick={handleClose} aria-label="close" style={{ width: 36, height: 36, borderRadius: 12,
-              border: "1px solid rgba(77,81,234,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
+              border: "1px solid rgba(106,69,230,0.25)", background: "rgba(255,255,255,0.6)", cursor: "pointer", color: COLORS.textPrimary,
               fontSize: 18, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
               WebkitTapHighlightColor: "transparent" }}>×</button>
           </div>
