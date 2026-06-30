@@ -2960,11 +2960,15 @@ function LangSwitch({ lang, setLang }) {
 // Logo slot top-left: theme-aware (logo_dark.PNG in dark, logo_light.PNG in light); clickable -> home. Falls back to wordmark.
 function Logo({ theme, onHome }) {
   var [ok, setOk] = useState(true);
-  useEffect(function(){ setOk(true); }, [theme]); // re-try image when theme (src) changes
+  var [iconOk, setIconOk] = useState(true);
+  useEffect(function(){ setOk(true); setIconOk(true); }, [theme]); // re-try images when theme (src) changes
   var src = theme === "dark" ? "/logo_dark.PNG" : "/logo_light.PNG";
+  var iconSrc = theme === "dark" ? "/logo-dark.png" : "/logo-light.png";
   return <div onClick={onHome} role="button" aria-label="home"
-    style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-    {ok && <img key={theme} className="mo-logoimg" src={src} alt="matchours" onError={function(){ setOk(false); }}
+    style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+    {iconOk && <img key={"icon" + theme} className="mo-logoicon" src={iconSrc} alt="" onError={function(){ setIconOk(false); }}
+      style={{ width: "auto", objectFit: "contain" }} />}
+    {ok && <img key={theme} className="mo-logoimg" src={src} alt="fikstür" onError={function(){ setOk(false); }}
       style={{ width: "auto", objectFit: "contain" }} />}
     {!ok && <span style={{ color: COLORS.textPrimary, fontSize: 22, fontWeight: 800, letterSpacing: "-0.8px" }}>
       match<span style={{ color: COLORS.accent }}>ours</span></span>}
@@ -3565,6 +3569,7 @@ function AppStyles() {
     ".mo-sporttabs{justify-content:flex-start}@media(min-width:900px){.mo-sporttabs{justify-content:center}}" +
     ".mo-newsgrid{grid-template-columns:repeat(2,1fr)}@media(min-width:700px){.mo-newsgrid{grid-template-columns:repeat(3,1fr)}}" +
     ".mo-logoimg{height:30px}@media(min-width:900px){.mo-logoimg{height:38px}}" +
+    ".mo-logoicon{height:34px}@media(min-width:900px){.mo-logoicon{height:44px}}" +
     // light-mode purple navbar: white text/icons/lines, translucent button/input fills, white sport icons
     ".mo-navlight *{color:#fff!important}" +
     ".mo-navlight button{background:rgba(255,255,255,0.16)!important}" +
