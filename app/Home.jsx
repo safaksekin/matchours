@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
 import { supabase } from "./lib/supabaseClient";
 import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addComment as dbAddComment, fetchCommunityFeed,
-  fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername } from "./lib/db";
+  fetchCommentCounts, fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -52,6 +52,44 @@ function FavButton({ kind, refId, name, image, meta, size }) {
       <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
     </svg>
   </button>;
+}
+
+// Per-match comment counts: a tiny batched store so every match card shows its real count
+// with a single query per render batch (not one query per card). Requests within 60ms coalesce.
+var CMT = { cache: {}, pending: new Set(), listeners: new Set(), timer: null };
+function cmtEmit() { CMT.listeners.forEach(function (fn) { fn(); }); }
+function cmtFlush() {
+  CMT.timer = null;
+  var ids = Array.from(CMT.pending); CMT.pending.clear();
+  if (!ids.length) return;
+  ids.forEach(function (id) { if (CMT.cache[id] == null) CMT.cache[id] = -1; }); // mark in-flight
+  fetchCommentCounts(ids).then(function (map) {
+    ids.forEach(function (id) { CMT.cache[id] = (map && map[id]) || 0; });
+    cmtEmit();
+  }).catch(function () { ids.forEach(function (id) { CMT.cache[id] = 0; }); cmtEmit(); });
+}
+function cmtRequest(id) {
+  if (id == null) return;
+  var k = String(id);
+  if (CMT.cache[k] != null) return; // already have it or in-flight
+  CMT.pending.add(k);
+  if (!CMT.timer) CMT.timer = setTimeout(cmtFlush, 60);
+}
+// Keep a count fresh after the user posts a comment (so the card updates without a refetch).
+function cmtBump(id, delta) {
+  if (id == null) return;
+  var k = String(id); var cur = CMT.cache[k]; if (cur == null || cur < 0) cur = 0;
+  CMT.cache[k] = Math.max(0, cur + (delta == null ? 1 : delta)); cmtEmit();
+}
+function useCommentCount(id) {
+  var [, force] = useState(0);
+  useEffect(function () {
+    var fn = function () { force(function (x) { return x + 1; }); };
+    CMT.listeners.add(fn); cmtRequest(id);
+    return function () { CMT.listeners.delete(fn); };
+  }, [id]);
+  var v = CMT.cache[String(id)];
+  return (v == null || v < 0) ? 0 : v;
 }
 
 // Track (per device) which matches THIS user generated an AI preview for, so it auto-shows
@@ -181,7 +219,7 @@ const I18N = {
     substitutions: "Değişiklikler",
     h2hLabel: "Rekabet Geçmişi", pastMatches: "Geçmiş Maçlar", vsLabel: "vs", finishedTab: "Biten Maçlar", upcomingTab: "Oynanacak Maçlar",
     searchPlaceholder: "Takım, lig veya oyuncu ara...", noResults: "Sonuç bulunamadı.",
-    players: "Oyuncular", noPlayerFound: "Oyuncu bulunamadı.", plProfile: "Oyuncu Profili", teamsLabel: "Takımlar",
+    players: "Oyuncular", noPlayerFound: "Oyuncu bulunamadı.", plProfile: "Oyuncu Profili", teamsLabel: "Takımlar", matchesLabel: "Maçlar",
     tmProfile: "Takım Profili", founded: "Kuruluş", capacity: "Kapasite", formLabel: "Form", gFor: "Attığı", gAgainst: "Yediği",
     pmTitle: "Maç İstatistikleri", pmDribbles: "Çalım", pmPassAcc: "Pas İsabeti", pmNoData: "Bu oyuncu için istatistik yok.",
     leaguesTitle: "Ligler", fixturesLabel: "Fikstür", yourRating: "Senin Puanın", perfComment: "Performans Yorumu", rateSubmit: "Oyla", rateSaved: "Puanın kaydedildi", todayLabel: "Bugün", standoutsTitle: "Günün Göze Çarpanları", allLabel: "Tümü",
@@ -219,7 +257,7 @@ const I18N = {
     substitutions: "Substitutions",
     h2hLabel: "H2H", pastMatches: "Past Matches", vsLabel: "vs", finishedTab: "Finished", upcomingTab: "Upcoming",
     searchPlaceholder: "Search team, league or player...", noResults: "No results.",
-    players: "Players", noPlayerFound: "No players found.", plProfile: "Player Profile", teamsLabel: "Teams",
+    players: "Players", noPlayerFound: "No players found.", plProfile: "Player Profile", teamsLabel: "Teams", matchesLabel: "Matches",
     tmProfile: "Team Profile", founded: "Founded", capacity: "Capacity", formLabel: "Form", gFor: "Goals For", gAgainst: "Goals Against",
     pmTitle: "Match Stats", pmDribbles: "Dribbles", pmPassAcc: "Pass Accuracy", pmNoData: "No stats for this player.",
     leaguesTitle: "Leagues", fixturesLabel: "Fixtures", yourRating: "Your Rating", perfComment: "Performance Note", rateSubmit: "Rate", rateSaved: "Rating saved", todayLabel: "Today", standoutsTitle: "Standouts of the Day", allLabel: "All",
@@ -257,7 +295,7 @@ const I18N = {
     substitutions: "Wechsel",
     h2hLabel: "Eins gegen Eins", pastMatches: "Fruhere Spiele", vsLabel: "vs", finishedTab: "Beendet", upcomingTab: "Anstehend",
     searchPlaceholder: "Team, Liga oder Spieler suchen...", noResults: "Keine Ergebnisse.",
-    players: "Spieler", noPlayerFound: "Keine Spieler gefunden.", plProfile: "Spielerprofil", teamsLabel: "Teams",
+    players: "Spieler", noPlayerFound: "Keine Spieler gefunden.", plProfile: "Spielerprofil", teamsLabel: "Teams", matchesLabel: "Spiele",
     tmProfile: "Teamprofil", founded: "Gegrundet", capacity: "Kapazitat", formLabel: "Form", gFor: "Tore", gAgainst: "Gegentore",
     pmTitle: "Spielstatistik", pmDribbles: "Dribblings", pmPassAcc: "Passquote", pmNoData: "Keine Statistik fur diesen Spieler.",
     leaguesTitle: "Ligen", fixturesLabel: "Spielplan", yourRating: "Deine Note", perfComment: "Leistungsnotiz", rateSubmit: "Bewerten", rateSaved: "Bewertung gespeichert", todayLabel: "Heute", standoutsTitle: "Tagesstars", allLabel: "Alle",
@@ -529,6 +567,7 @@ function CommentSection({ match, t }) {
     setList([{ user: "sen", text: x, time: t.now }].concat(list)); // optimistic
     setV("");
     dbAddComment(Object.assign({}, ctx, { body: x }));
+    cmtBump(match.id, 1); // keep the card's comment count in sync
   }
   return <div>
     <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -2288,11 +2327,27 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
           {showScore && <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>{match.score ? match.score.split(" - ")[1] : ""}</span>}
         </div>
       </div>}
-    <span style={{ color: hover ? COLORS.accent : COLORS.textMuted, fontSize: 18, fontWeight: 700,
-      transition: "color 0.3s ease", flexShrink: 0 }}>›</span>
+    <MatchCardActions match={match} isF1={isF1} t={t} />
   </div>
   {divider && <div style={{ height: 1, background: COLORS.border, margin: "0 14px" }} />}
   </>;
+}
+
+// Right-side actions on a match card: comment count (icon + real count) then the save button.
+function MatchCardActions({ match, isF1, t }) {
+  var count = useCommentCount(match.id);
+  var favName = isF1 ? match.home : (locTeam(match.home, t) + " - " + locTeam(match.away, t));
+  return <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: COLORS.textMuted,
+      fontSize: 12, fontWeight: 700, padding: "0 2px" }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+      </svg>
+      {count}
+    </span>
+    <FavButton kind="match" refId={match.id} name={favName} image={match.homeLogo} meta={matchSnap(match)} size={30} />
+  </div>;
 }
 
 function MatchCard({ match, isF1, onOpen, t }) {
@@ -3455,11 +3510,11 @@ function CommunityPage({ onBack, t, onOpenMatch, liveLookup }) {
 
 // One saved team/player row in the Favorites page.
 function FavoriteRow({ rec, onOpen, t }) {
-  var sub = rec.meta && (rec.meta.position || rec.meta.country);
+  var sub = rec.meta && (rec.meta.position || rec.meta.country || rec.meta.league);
   var displayName = rec.kind === "team" ? locTeam(rec.name, t) : rec.name;
   return <div onClick={onOpen} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 6px",
     borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-    {rec.kind === "team"
+    {(rec.kind === "team" || rec.kind === "match")
       ? <TeamLogo src={rec.image} name={rec.name} size={38} />
       : (rec.image
           ? <img src={rec.image} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
@@ -3474,11 +3529,12 @@ function FavoriteRow({ rec, onOpen, t }) {
 }
 
 // Favorites page: saved teams + players, stacked.
-function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer }) {
+function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer, onOpenMatch }) {
   useFavorites();
   var recs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
   var teams = recs.filter(function(r){ return r.kind === "team"; });
   var players = recs.filter(function(r){ return r.kind === "player"; });
+  var matchFavs = recs.filter(function(r){ return r.kind === "match"; });
   var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 6px" };
   return <SimplePage title={t.favorites} onBack={onBack} t={t}>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
@@ -3491,6 +3547,8 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer 
         : recs.length === 0
           ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noFavorites}</div>
           : <div>
+              {matchFavs.length > 0 && <div><div style={label}>{t.matchesLabel || "Maçlar"}</div>
+                {matchFavs.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(r); }} />; })}</div>}
               {teams.length > 0 && <div><div style={label}>{t.teamsLabel}</div>
                 {teams.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} t={t} onOpen={function(){ onOpenTeam(r); }} />; })}</div>}
               {players.length > 0 && <div><div style={label}>{t.players}</div>
@@ -3939,7 +3997,8 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     <FavoritesPage onBack={function(){ setShowFavorites(false); }} t={t} loggedIn={loggedIn}
       onLogin={function(){ setShowLogin(true); }}
       onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
-      onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }} />
+      onOpenPlayer={function(r){ setSelectedPlayer({ id: r.ref_id, name: r.name, photo: r.image }); }}
+      onOpenMatch={function(r){ setSelectedMatch(freshMatch(r.ref_id) || r.meta || { id: r.ref_id }); }} />
     <MobileBottomNav active="favoriler" onSelect={onMobileNav} t={t} />
     {selectedTeam && <TeamModal team={selectedTeam} t={t} onClose={function(){ setSelectedTeam(null); }} onOpenMatch={function(m){ setSelectedMatch(m); }} />}
     {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}

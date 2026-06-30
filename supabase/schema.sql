@@ -169,8 +169,8 @@ alter table public.api_cache enable row level security;
 create table if not exists public.favorites (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
-  kind        text not null check (kind in ('team','player')),
-  ref_id      text not null,            -- team id or player id
+  kind        text not null check (kind in ('team','player','match')),
+  ref_id      text not null,            -- team id, player id or match id
   name        text,
   image       text,                     -- team logo or player photo
   meta        jsonb,                    -- extra: position, country, etc.

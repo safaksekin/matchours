@@ -132,6 +132,27 @@ export async function fetchMatchComments(matchId) {
   });
 }
 
+// Comment counts for a batch of matches in ONE query, so every match card can show its
+// real count without a query per card. A comment counts toward a match if its match_id is
+// the match, or it's a match-level comment whose target_id is the match.
+export async function fetchCommentCounts(matchIds) {
+  const ids = Array.from(new Set((matchIds || []).map(String).filter(Boolean)));
+  if (!ids.length) return {};
+  const list = ids.join(",");
+  const { data } = await supabase.from("comments")
+    .select("id, target_id, match_id, target_type")
+    .or("match_id.in.(" + list + "),and(target_type.eq.match,target_id.in.(" + list + "))");
+  const set = new Set(ids);
+  const counts = {};
+  (data || []).forEach(function (r) {
+    let key = (r.match_id != null && set.has(String(r.match_id))) ? String(r.match_id)
+            : (set.has(String(r.target_id)) ? String(r.target_id) : null);
+    if (key == null) return;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
+
 // All comments, newest first, with usernames — for the community/forum feed.
 export async function fetchCommunityFeed(limit) {
   const { data } = await supabase.from("comments")
