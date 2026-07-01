@@ -146,6 +146,8 @@ function fmtCommentTime(iso) {
 const COLORS = {
   bg: "var(--bg)", surface: "var(--card)", card: "var(--card)", cardAlt: "var(--cardAlt)",
   border: "var(--border)", accent: "var(--accent)", accentDim: "var(--accentDim)",
+  accentGrad: "var(--accentGrad)", accentGlow: "var(--accentGlow)",
+  glassPurple: "var(--glassPurple)", glassBorder: "var(--glassBorder)",
   teal: "var(--teal)", mint: "var(--mint)",
   purple: "var(--purple)", purpleDim: "var(--purpleDim)",
   textPrimary: "var(--textPrimary)", textSecondary: "var(--textSecondary)", textMuted: "var(--textMuted)",
@@ -156,6 +158,10 @@ const THEME_VARS = {
   light: {
     "--bg": "#F1F2F6", "--card": "#FFFFFF", "--cardAlt": "#E9EBF1",
     "--border": "#D7DBE8", "--accent": "#5A33CC", "--accentDim": "rgba(90,51,204,0.10)",
+    "--accentGrad": "linear-gradient(135deg, #7A52E6 0%, #5A33CC 52%, #4322A0 100%)",
+    "--accentGlow": "0 6px 18px -7px rgba(90,51,204,0.45), inset 0 1px 0 rgba(255,255,255,0.45)",
+    "--glassPurple": "linear-gradient(140deg, rgba(122,82,230,0.18), rgba(90,51,204,0.07) 55%, rgba(67,34,160,0.13))",
+    "--glassBorder": "rgba(122,82,230,0.30)",
     "--teal": "#C9CDDA", "--mint": "#EDEFF3",
     "--purple": "#2FAE55", "--purpleDim": "rgba(47,174,85,0.16)",
     "--textPrimary": "#161A35", "--textSecondary": "#585E82", "--textMuted": "#9AA0C0",
@@ -166,6 +172,10 @@ const THEME_VARS = {
   dark: {
     "--bg": "#0A0A0C", "--card": "#1B1B1F", "--cardAlt": "#26262B",
     "--border": "#34343A", "--accent": "#6A45E6", "--accentDim": "rgba(106,69,230,0.18)",
+    "--accentGrad": "linear-gradient(135deg, #8B6CFF 0%, #6A45E6 48%, #4D2FB0 100%)",
+    "--accentGlow": "0 6px 20px -6px rgba(106,69,230,0.55), inset 0 1px 0 rgba(255,255,255,0.28)",
+    "--glassPurple": "linear-gradient(140deg, rgba(139,108,255,0.24), rgba(106,69,230,0.10) 55%, rgba(77,47,176,0.18))",
+    "--glassBorder": "rgba(160,130,255,0.32)",
     "--teal": "#26262B", "--mint": "#161618",
     "--purple": "#3FD176", "--purpleDim": "rgba(63,209,118,0.18)",
     "--textPrimary": "#E8EAFB", "--textSecondary": "#A8AECE", "--textMuted": "#767C9E",
@@ -574,7 +584,7 @@ function CommentSection({ match, t }) {
       <input value={v} onChange={function(e){ setV(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") submit(); }}
         placeholder={t.writeComment} style={{ flex: 1, padding: "9px 13px", background: COLORS.cardAlt,
         border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
+      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", borderRadius: 12,
         color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.send}</button>
     </div>
     {list.length === 0 && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>—</div>}
@@ -1076,7 +1086,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
         <RatingSlider value={userRating} onChange={function(v){ setUserRating(v); setRatingSubmitted(false); }} />
         <button onClick={submitRating} disabled={ratingSubmitted}
           style={{ marginTop: 12, width: "100%", padding: "10px 16px", borderRadius: 12, border: "none",
-            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accent, color: ratingSubmitted ? COLORS.textSecondary : "#fff",
+            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accentGrad, boxShadow: ratingSubmitted ? "none" : COLORS.accentGlow, color: ratingSubmitted ? COLORS.textSecondary : "#fff",
             fontWeight: 800, fontSize: 14, cursor: ratingSubmitted ? "default" : "pointer", fontFamily: FONT, transition: "all 0.2s",
             WebkitTapHighlightColor: "transparent" }}>
           {ratingSubmitted ? (t.rateSaved + " · " + userRating.toFixed(1)) : t.rateSubmit}
@@ -1091,7 +1101,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
             onKeyDown={function(e){ if (e.key === "Enter") addComment(); }}
             placeholder={t.writeComment} style={{ flex: 1, minWidth: 0, padding: "9px 13px", background: COLORS.cardAlt,
               border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
+          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", borderRadius: 12,
             color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.send}</button>
         </div>
         {pComments.map(function(c, i){ return <div key={i} style={{ marginTop: 8, padding: "10px 12px", background: COLORS.cardAlt,
@@ -1299,13 +1309,14 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
             <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>Maç Önü Analizi</span>
             <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 7px", borderRadius: 6 }}>AI</span>
           </div>
-          <div style={{ background: "rgba(106,69,230,0.13)", border: "1px solid rgba(106,69,230,0.22)", borderRadius: 16, padding: "14px 16px" }}>
+          <div style={{ background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder, borderRadius: 16, padding: "14px 16px",
+            backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.14)" }}>
             {aiText
               ? <div style={{ color: COLORS.textPrimary, fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{aiText}</div>
               : aiLoading
                 ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "4px 0" }}>Analiz hazırlanıyor…</div>
                 : <button onClick={loadPreview} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px",
-                    background: COLORS.accent, color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+                    background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /></svg>
                     Analizi Oluştur
                   </button>}
@@ -3129,7 +3140,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
                     onKeyDown={function(e){ if (e.key === "Enter") saveName(); }}
                     style={{ flex: 1, minWidth: 0, padding: "7px 12px", background: COLORS.card, border: "1px solid " + COLORS.border,
                       borderRadius: 12, color: COLORS.textPrimary, fontSize: 16, fontWeight: 700, outline: "none", fontFamily: FONT }} />
-                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accent, color: "#fff",
+                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff",
                     border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.save}</button>
                 </div>
               : <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -3269,7 +3280,8 @@ function LoginScreen({ t, lang, setLang, theme, onClose }) {
       {error && <div style={{ color: COLORS.red, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{error}</div>}
       {info && <div style={{ color: COLORS.accent, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{info}</div>}
 
-      <button onClick={go} disabled={loading} style={{ width: "100%", padding: 14, background: loading ? COLORS.textMuted : COLORS.accent,
+      <button onClick={go} disabled={loading} style={{ width: "100%", padding: 14, background: loading ? COLORS.textMuted : COLORS.accentGrad,
+        boxShadow: loading ? "none" : COLORS.accentGlow,
         border: "none", borderRadius: 16, color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: FONT }}>
         {loading ? t.loggingIn : (mode === "signup" ? t.signup : t.login)}</button>
 
@@ -3541,7 +3553,7 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer,
       {!loggedIn
         ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>
             {t.favLoginPrompt}
-            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, color: "#fff",
+            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff",
               border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
           </div>
         : recs.length === 0
@@ -4012,8 +4024,8 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     <AppStyles />
 
     <div className="mo-shell" style={{ flex: "1 0 auto" }}>
-      <div className="mo-sticky" style={{ zIndex: 10, background: headerPurple ? COLORS.accent : COLORS.card,
-        boxShadow: headerPurple ? "0 3px 14px rgba(0,0,0,0.18)" : ("0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)"),
+      <div className="mo-sticky" style={{ zIndex: 10, background: headerPurple ? COLORS.accentGrad : COLORS.card,
+        boxShadow: headerPurple ? "0 3px 14px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.22)" : ("0 1px 0 " + COLORS.border + ", 0 3px 14px rgba(0,0,0,0.12)"),
         paddingTop: "max(12px, env(safe-area-inset-top))" }}>
         <div className={"mo-header-inner" + (headerPurple ? " mo-navlight" : "")} style={{ padding: "0 16px 8px" }}>
           <div style={{ position: "relative", display: "flex", alignItems: "center", marginBottom: 8 }}>
@@ -4075,7 +4087,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                     </button>
                   : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 12,
-                      background: COLORS.accent, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
+                      background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
                       fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                       {t.signInBtn}
