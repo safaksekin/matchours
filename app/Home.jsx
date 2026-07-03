@@ -206,7 +206,7 @@ function isoLocal(d) {
 const I18N = {
   tr: { _lang: "tr", tagline: "Tüm spor istatistikleri, tek ekranda.", email: "E-posta", password: "Şifre",
     login: "Giriş Yap", signInBtn: "Oturum Aç", menu: "Menü", loggingIn: "Giriş yapılıyor...", noAccount: "Hesabın yok mu?", signup: "Kayıt ol",
-    matches: "Maç", noMatches: "Bu kategoride maç bulunamadı.", loading: "Yükleniyor...",
+    matches: "Maç", noMatches: "Bu kategoride maç bulunamadı.", noLiveMatches: "Şu an oynanan canlı maç yok.", loading: "Yükleniyor...", totwTitle: "Haftanın 11'i",
     live: "CANLI", info: "Bilgi", grid: "Grid", tv: "Yayın", comments: "Yorumlar", commentDo: "Yorum yap",
     referee: "Hakem", stadium: "Stadyum", city: "Şehir", rank: "Lig Sırası",
     last5: "Son 5 Maç", draw: "Berabere", totalMatches: "karşılaşma", h2hLoad: "H2H yükle",
@@ -227,7 +227,7 @@ const I18N = {
     squads: "Kadrolar", matchStats: "İstatistik", bench: "Yedekler", lineupSoon: "Kadro henüz açıklanmadı.", noMatchStats: "İstatistik mevcut değil.", possession: "Topla Oynama", shots: "Şut", shotsOn: "İsabetli Şut", shotsOff: "İsabetsiz Şut", corners: "Korner", fouls: "Faul", offsides: "Ofsayt", saves: "Kurtarış", throwIns: "Taç", freeKicks: "Serbest Vuruş", goalKicks: "Kale Vuruşu", yellowCards: "Sarı Kart", redCards: "Kırmızı Kart",
     blockedShots: "Bloke Şut", totalPasses: "Toplam Pas", accuratePasses: "İsabetli Pas",
     substitutions: "Değişiklikler",
-    h2hLabel: "Rekabet Geçmişi", pastMatches: "Geçmiş Maçlar", vsLabel: "vs", finishedTab: "Biten Maçlar", upcomingTab: "Oynanacak Maçlar",
+    h2hLabel: "Rekabet Geçmişi", pastMatches: "Geçmiş Maçlar", vsLabel: "vs", finishedTab: "Biten Maçlar", upcomingTab: "Oynanacak Maçlar", liveTab: "Canlı",
     searchPlaceholder: "Takım, lig veya oyuncu ara...", noResults: "Sonuç bulunamadı.",
     players: "Oyuncular", noPlayerFound: "Oyuncu bulunamadı.", plProfile: "Oyuncu Profili", teamsLabel: "Takımlar", matchesLabel: "Maçlar",
     tmProfile: "Takım Profili", founded: "Kuruluş", capacity: "Kapasite", formLabel: "Form", gFor: "Attığı", gAgainst: "Yediği",
@@ -244,7 +244,7 @@ const I18N = {
     sports: { live: "Canlı", football: "Futbol", basketball: "Basketbol", motorsport: "Formula 1", tennis: "Tenis", volleyball: "Voleybol", esports: "Espor", mma: "MMA" } },
   en: { _lang: "en", tagline: "All sports stats, on one screen.", email: "Email", password: "Password",
     login: "Log In", signInBtn: "Sign In", menu: "Menu", loggingIn: "Logging in...", noAccount: "No account?", signup: "Sign up",
-    matches: "Matches", noMatches: "No matches in this category.", loading: "Loading...",
+    matches: "Matches", noMatches: "No matches in this category.", noLiveMatches: "No live matches right now.", loading: "Loading...", totwTitle: "Team of the Round",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Broadcast", comments: "Comments", commentDo: "Comment",
     referee: "Referee", stadium: "Stadium", city: "City", rank: "League Rank",
     last5: "Last 5 Matches", draw: "Draw", totalMatches: "meetings", h2hLoad: "Load H2H",
@@ -265,7 +265,7 @@ const I18N = {
     squads: "Lineups", matchStats: "Stats", bench: "Bench", lineupSoon: "Lineup not announced yet.", noMatchStats: "Stats not available.", possession: "Possession", shots: "Shots", shotsOn: "Shots on", shotsOff: "Shots off", corners: "Corners", fouls: "Fouls", offsides: "Offsides", saves: "Saves", throwIns: "Throw-ins", freeKicks: "Free kicks", goalKicks: "Goal kicks", yellowCards: "Yellow cards", redCards: "Red cards",
     blockedShots: "Blocked", totalPasses: "Total Passes", accuratePasses: "Accurate Passes",
     substitutions: "Substitutions",
-    h2hLabel: "H2H", pastMatches: "Past Matches", vsLabel: "vs", finishedTab: "Finished", upcomingTab: "Upcoming",
+    h2hLabel: "H2H", pastMatches: "Past Matches", vsLabel: "vs", finishedTab: "Finished", upcomingTab: "Upcoming", liveTab: "Live",
     searchPlaceholder: "Search team, league or player...", noResults: "No results.",
     players: "Players", noPlayerFound: "No players found.", plProfile: "Player Profile", teamsLabel: "Teams", matchesLabel: "Matches",
     tmProfile: "Team Profile", founded: "Founded", capacity: "Capacity", formLabel: "Form", gFor: "Goals For", gAgainst: "Goals Against",
@@ -282,7 +282,7 @@ const I18N = {
     sports: { live: "Live", football: "Football", basketball: "Basketball", motorsport: "Formula 1", tennis: "Tennis", volleyball: "Volleyball", esports: "Esports", mma: "MMA" } },
   de: { _lang: "de", tagline: "Alle Sportstatistiken auf einem Bildschirm.", email: "E-Mail", password: "Passwort",
     login: "Anmelden", signInBtn: "Anmelden", menu: "Menü", loggingIn: "Anmeldung...", noAccount: "Kein Konto?", signup: "Registrieren",
-    matches: "Spiele", noMatches: "Keine Spiele in dieser Kategorie.", loading: "Laden...",
+    matches: "Spiele", noMatches: "Keine Spiele in dieser Kategorie.", noLiveMatches: "Derzeit keine Live-Spiele.", loading: "Laden...", totwTitle: "Team der Runde",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Ubertragung", comments: "Kommentare", commentDo: "Kommentieren",
     referee: "Schiedsrichter", stadium: "Stadion", city: "Stadt", rank: "Tabellenplatz",
     last5: "Letzte 5 Spiele", draw: "Unentschieden", totalMatches: "Begegnungen", h2hLoad: "H2H laden",
@@ -303,7 +303,7 @@ const I18N = {
     squads: "Aufstellung", matchStats: "Statistik", bench: "Bank", lineupSoon: "Aufstellung noch nicht bekannt.", noMatchStats: "Statistik nicht verfugbar.", possession: "Ballbesitz", shots: "Schusse", shotsOn: "Aufs Tor", shotsOff: "Daneben", corners: "Ecken", fouls: "Fouls", offsides: "Abseits", saves: "Paraden", throwIns: "Einwurfe", freeKicks: "Freistosse", goalKicks: "Abstosse", yellowCards: "Gelbe Karten", redCards: "Rote Karten",
     blockedShots: "Geblockt", totalPasses: "Passe gesamt", accuratePasses: "Genaue Passe",
     substitutions: "Wechsel",
-    h2hLabel: "Eins gegen Eins", pastMatches: "Fruhere Spiele", vsLabel: "vs", finishedTab: "Beendet", upcomingTab: "Anstehend",
+    h2hLabel: "Eins gegen Eins", pastMatches: "Fruhere Spiele", vsLabel: "vs", finishedTab: "Beendet", upcomingTab: "Anstehend", liveTab: "Live",
     searchPlaceholder: "Team, Liga oder Spieler suchen...", noResults: "Keine Ergebnisse.",
     players: "Spieler", noPlayerFound: "Keine Spieler gefunden.", plProfile: "Spielerprofil", teamsLabel: "Teams", matchesLabel: "Spiele",
     tmProfile: "Teamprofil", founded: "Gegrundet", capacity: "Kapazitat", formLabel: "Form", gFor: "Tore", gAgainst: "Gegentore",
@@ -321,7 +321,6 @@ const I18N = {
 };
 
 const SPORT_TABS = [
-  { id: "live",       icon: "/cat1.png" },
   { id: "football",   icon: "/cat2.png" },
   { id: "basketball", icon: "/cat3.png" },
   { id: "motorsport", icon: "/cat4.png" },
@@ -2042,10 +2041,11 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
           <div style={{ color: COLORS.textPrimary, fontSize: 21, fontWeight: 800,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{league.name}</div>
         </div>
-        <button onClick={onClear} aria-label="kapat" style={{ width: 32, height: 32, borderRadius: 10, border: "none",
-          background: "rgba(0,0,0,0.28)", color: COLORS.textPrimary, cursor: "pointer", display: "flex",
-          alignItems: "center", justifyContent: "center", flexShrink: 0, WebkitTapHighlightColor: "transparent" }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        <button onClick={onClear} aria-label="kapat" style={{ width: 34, height: 34, borderRadius: 999, border: "1px solid " + COLORS.glassBorder,
+          background: "rgba(0,0,0,0.30)", color: COLORS.textPrimary, cursor: "pointer", display: "flex",
+          alignItems: "center", justifyContent: "center", flexShrink: 0, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)", WebkitTapHighlightColor: "transparent" }}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
       {/* section tabs: sliding-underline tab bar (always purple); sits inside the banner */}
@@ -2168,6 +2168,73 @@ function StandoutsBox({ players, t, onOpen }) {
   </div>;
 }
 
+// Compact display name for tight chips: the last token of a full name.
+function lastName(n){ n = (n || "").trim(); if (!n) return ""; var parts = n.split(" "); return parts.length > 1 ? parts[parts.length - 1] : n; }
+
+// Which knockout round the "team of the round" is built from. Bump to "Round of 16" etc. as the WC advances.
+var WC_TOTW_ROUND = "Round of 32";
+
+// Team of the round: best XI (4-3-3) from every finished match of the WC's current knockout round.
+// Shown on a small pitch in the sidebar; hidden until the API returns an XI.
+function HaftaninTakimi({ season, t, onOpenPlayer }) {
+  var [data, setData] = useState(null);
+  useEffect(function(){
+    var cancelled = false;
+    fetch("/api/football?mode=totw&league=1&season=" + (season || 2026) + "&round=" + encodeURIComponent(WC_TOTW_ROUND))
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (!cancelled) setData(j || { players: [] }); })
+      .catch(function(){ if (!cancelled) setData({ players: [] }); });
+    return function(){ cancelled = true; };
+  }, [season]);
+  if (!data || !data.players || data.players.length === 0) return null;
+  var rows = [["F"], ["M"], ["D"], ["G"]].map(function(g){
+    return data.players.filter(function(p){ return p.slot === g[0]; });
+  });
+  function chip(p){
+    return <div key={p.id} onClick={function(){ if (onOpenPlayer && p.id != null) onOpenPlayer({ id: p.id, name: p.name, photo: p.photo }); }}
+      style={{ width: 58, textAlign: "center", cursor: onOpenPlayer ? "pointer" : "default", WebkitTapHighlightColor: "transparent" }}>
+      <div style={{ position: "relative", width: 42, height: 42, margin: "0 auto 3px" }}>
+        {p.photo
+          ? <img src={p.photo} alt="" style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.9)", background: "#0a5c30" }} />
+          : <span style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "inline-block", border: "2px solid rgba(255,255,255,0.9)" }} />}
+        <span style={{ position: "absolute", right: -4, bottom: -4, background: "#fff", color: "#0a5c30", fontSize: 9.5,
+          fontWeight: 800, borderRadius: 6, padding: "0 4px", lineHeight: "15px", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}>{p.rating != null ? p.rating.toFixed(1) : "-"}</span>
+      </div>
+      <div style={{ color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(p.name)}</div>
+    </div>;
+  }
+  return <div style={{ marginTop: 16, borderRadius: 22, overflow: "hidden", boxShadow: "0 2px 14px rgba(20,40,40,0.10)" }}>
+    <div style={{ padding: "13px 15px 10px", display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: "linear-gradient(160deg, #12833f, #0a5c30)" }}>
+      <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>{t.totwTitle}</span>
+      <span style={{ color: "rgba(255,255,255,0.82)", fontSize: 11, fontWeight: 700 }}>{data.round}</span>
+    </div>
+    <div style={{ position: "relative", padding: "16px 10px", minHeight: 372,
+      background: "repeating-linear-gradient(180deg, #0e7038 0 40px, #0c6a34 40px 80px)" }}>
+      {/* field markings */}
+      {(function(){ var ln = "rgba(255,255,255,0.24)"; var b = "2px solid " + ln;
+        return <div aria-hidden style={{ position: "absolute", top: 12, left: 12, right: 12, bottom: 12, border: b, borderRadius: 6, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 2, marginTop: -1, background: ln }} />
+          <div style={{ position: "absolute", left: "50%", top: "50%", width: 76, height: 76, marginLeft: -38, marginTop: -38, border: b, borderRadius: "50%" }} />
+          <div style={{ position: "absolute", left: "50%", top: "50%", width: 5, height: 5, marginLeft: -2.5, marginTop: -2.5, background: ln, borderRadius: "50%" }} />
+          {/* top box (attacking third) */}
+          <div style={{ position: "absolute", left: "50%", top: 0, width: "48%", height: 58, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderBottom: b }} />
+          <div style={{ position: "absolute", left: "50%", top: 0, width: "26%", height: 26, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderBottom: b }} />
+          {/* bottom box (own third) */}
+          <div style={{ position: "absolute", left: "50%", bottom: 0, width: "48%", height: 58, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderTop: b }} />
+          <div style={{ position: "absolute", left: "50%", bottom: 0, width: "26%", height: 26, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderTop: b }} />
+        </div>;
+      })()}
+      {/* players spread across the pitch: rows top(F) -> bottom(G), evenly within each row */}
+      <div style={{ position: "relative", zIndex: 1, minHeight: 340, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        {rows.map(function(row, ri){ return <div key={ri} style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", gap: 4 }}>
+          {row.map(function(p){ return chip(p); })}
+        </div>; })}
+      </div>
+    </div>
+  </div>;
+}
+
 // Rate the 3 standouts side by side (sliders). Bottom sheet, mock/local.
 function StandoutsRating({ players, t, onClose }) {
   var [visible, setVisible] = useState(false);
@@ -2244,37 +2311,106 @@ function UnderlineTabs({ tabs, active, onChange, baseline, indicatorColor }) {
   </div>;
 }
 
-function DayMatchList({ matches, t, isF1, onOpen }) {
-  var [tab, setTab] = useState("upcoming"); // "upcoming" | "finished"
-  if (!matches || matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
+// Small "Canlı" pill label: cat1 icon + text + an always-blinking red dot.
+function LiveTabLabel({ t }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <img src="/cat1.png" alt="" style={{ width: 15, height: 15, objectFit: "contain" }} />
+    {t.liveTab}
+    <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.red, animation: "pulse 1.4s infinite", display: "inline-block" }} />
+  </span>;
+}
 
-  var ascending = tab === "upcoming"; // upcoming: soonest day first; finished: most recent day first
-  var list = matches.filter(function(m){
-    return ascending ? (m.status === "upcoming" || m.status === "live") : (m.status === "finished");
-  });
+// Main match feed: three tabs — Canlı (live only, by minute) | Oynanacak (live on top by minute,
+// then upcoming grouped by day, same-kickoff ties broken by league order) | Biten (by league order).
+function DayMatchList({ matches, t, isF1, onOpen }) {
+  matches = matches || [];
+  var live = matches.filter(function(m){ return m.status === "live"; });
+  var [tab, setTab] = useState("upcoming"); // "live" | "upcoming" | "finished"
+  if (matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
 
   var todayKey = isoLocal(new Date());
-  function header(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
-  // group by day, keep date separators; order days (and matches within a day) by the tab direction
-  var groups = {};
-  list.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
-  var keys = Object.keys(groups).sort(function(a, b){ return ascending ? (a < b ? -1 : a > b ? 1 : 0) : (a < b ? 1 : a > b ? -1 : 0); });
+  function dayHeader(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
+  var card = { background: COLORS.card, borderRadius: 18, padding: "2px 10px 8px" };
+  var sepStyle = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "14px 4px 8px", borderBottom: "1px solid " + COLORS.border, marginBottom: 2 };
+  function liveRows(){
+    var items = live.slice().sort(function(a, b){ return (b.minute || 0) - (a.minute || 0); }); // latest minute first
+    return items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+      divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; });
+  }
+  // small inline "Canlı" separator (icon + blinking dot) reused above the live rows
+  var liveSep = <div style={Object.assign({}, sepStyle, { display: "flex", alignItems: "center", gap: 6 })}>
+    <img src="/cat1.png" alt="" style={{ width: 14, height: 14, objectFit: "contain" }} />{t.liveTab}
+    <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.red, animation: "pulse 1.4s infinite", display: "inline-block" }} /></div>;
+
+  function renderLive(){
+    if (!live.length) return <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noLiveMatches || t.noMatches}</div>;
+    return <div style={card}>{liveRows()}</div>;
+  }
+  function renderUpcoming(){
+    var up = matches.filter(function(m){ return m.status === "upcoming"; });
+    var groups = {};
+    up.forEach(function(m){ var k = m.dateKey || todayKey; if (!groups[k]) groups[k] = []; groups[k].push(m); });
+    var keys = Object.keys(groups).sort(function(a, b){ return a < b ? -1 : a > b ? 1 : 0; }); // soonest day first
+    if (!live.length && !keys.length) return <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>;
+    return <div style={card}>
+      {live.length > 0 && <div style={{ marginBottom: 4 }}>{liveSep}{liveRows()}</div>}
+      {keys.map(function(k){
+        // within a day: earliest kickoff first; same kickoff -> our league order (WC, ŞL, UEL...)
+        var items = groups[k].slice().sort(function(a, b){ return ((a.ts || 0) - (b.ts || 0)) || (leaguePri(a) - leaguePri(b)); });
+        return <div key={k} style={{ marginBottom: 4 }}>
+          <div style={sepStyle}>{dayHeader(k)}</div>
+          {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+            divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
+        </div>;
+      })}
+    </div>;
+  }
 
   return <div>
-    <UnderlineTabs indicatorColor={COLORS.accent} tabs={[{ id: "finished", label: t.finishedTab }, { id: "upcoming", label: t.upcomingTab }]} active={tab} onChange={setTab} />
-    {keys.length === 0
-      ? <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>
-      : <div style={{ background: COLORS.card, borderRadius: 18, padding: "2px 10px 8px" }}>
-          {keys.map(function(k){
-            var items = groups[k].slice().sort(function(a, b){ return ascending ? ((a.ts || 0) - (b.ts || 0)) : ((b.ts || 0) - (a.ts || 0)); });
-            return <div key={k} style={{ marginBottom: 4 }}>
-              <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "14px 4px 8px",
-                borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>{header(k)}</div>
-              {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
-                divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
-            </div>;
-          })}
-        </div>}
+    <UnderlineTabs indicatorColor={COLORS.accent} active={tab} onChange={setTab}
+      tabs={[{ id: "live", label: <LiveTabLabel t={t} /> }, { id: "upcoming", label: t.upcomingTab }, { id: "finished", label: t.finishedTab }]} />
+    {tab === "live" ? renderLive()
+      : tab === "finished"
+        ? <LeagueGroupedList matches={matches.filter(function(m){ return m.status === "finished"; })} t={t} onOpen={onOpen} empty={t.noMatches} />
+        : renderUpcoming()}
+  </div>;
+}
+
+// League priority for ordering: WC(1) > UCL(2) > UEL(3) > Conf(848) > Premier(39) > rest.
+var LEAGUE_PRIORITY = { 1: 1, 2: 2, 3: 3, 848: 4, 39: 5 };
+function leaguePri(m) { return LEAGUE_PRIORITY[m && m.leagueId] || 999; }
+
+// Matches grouped by league (never by day). World Cup on top, then the big European cups and
+// top leagues, everything else after — mirrors the World Cup group layout. Used for finished/live.
+function LeagueGroupedList({ matches, t, onOpen, empty }) {
+  if (!matches || matches.length === 0)
+    return <div style={{ textAlign: "center", padding: "44px 20px", color: COLORS.textMuted, fontSize: 13 }}>{empty || t.noMatches}</div>;
+  var PRIORITY = LEAGUE_PRIORITY;
+  var groups = {}, order = [];
+  matches.forEach(function(m){
+    var k = String(m.leagueId != null ? m.leagueId : (m.league || "?"));
+    if (!groups[k]) { groups[k] = { id: m.leagueId, name: m.league, logo: m.leagueLogo, items: [] }; order.push(k); }
+    groups[k].items.push(m);
+  });
+  var origIndex = {}; order.forEach(function(k, i){ origIndex[k] = i; });
+  order.sort(function(a, b){
+    var pa = PRIORITY[a] || 999, pb = PRIORITY[b] || 999;
+    return pa !== pb ? pa - pb : origIndex[a] - origIndex[b];
+  });
+  return <div style={{ background: COLORS.card, borderRadius: 18, padding: "2px 10px 8px" }}>
+    {order.map(function(k){
+      var g = groups[k]; var logo = leagueLogo(g.id, g.logo);
+      return <div key={k} style={{ marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 4px 8px",
+          borderBottom: "1px solid " + COLORS.border, marginBottom: 2 }}>
+          {logo && <img src={logo} alt="" style={{ width: 18, height: 18, objectFit: "contain", flexShrink: 0 }} />}
+          <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800 }}>{g.name || ""}</span>
+        </div>
+        {g.items.slice().sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); }) // most-recently-finished first
+          .map(function(m, i, arr){ return <MatchRow key={m.id} match={m} isF1={false} t={t}
+            divider={i < arr.length - 1} onOpen={function(){ onOpen(m); }} />; })}
+      </div>;
+    })}
   </div>;
 }
 
@@ -3649,14 +3785,14 @@ function AppStyles() {
     ".mo-navlight input::placeholder{color:rgba(255,255,255,0.72)!important}" +
     ".mo-navlight img{filter:brightness(0) invert(1)!important}" +
     "@media(min-width:900px){.mo-only-mobile{display:none}.mo-only-desktop{display:block}}" +
-    "@media(max-width:899px){.mo-col-right{order:-1}}" +
     "@media(max-width:899px){body{padding-bottom:calc(58px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:899px){.mo-usingleague .mo-col-left{display:none}}" +
     ".mo-cols{display:flex;flex-direction:column;gap:18px}" +
     ".mo-col-left{width:100%;min-width:0}" +
     ".mo-col-right{width:100%;min-width:0}" +
     "@media(min-width:900px){.mo-cols{flex-direction:row;align-items:flex-start}" +
-      ".mo-col-left{width:42%;flex-shrink:0;min-width:0;position:sticky;top:0}" +
-      ".mo-col-right{width:58%;min-width:0}}" +
+      ".mo-col-left{width:50%;min-width:0}" +
+      ".mo-col-right{width:50%;flex-shrink:0;min-width:0;margin-top:46px}}" +
     ".mo-team-name{font-size:15px}" +
     "@media(min-width:600px){.mo-team-name{font-size:19px}}" +
     ".mo-grid{display:block}" +
@@ -3680,7 +3816,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   var [lang, setLang] = useState("tr");
   var [session, setSession] = useState(null);
   var [authReady, setAuthReady] = useState(false);
-  var [activeSport, setActiveSport] = useState(initialSport || "football");
+  var [activeSport, setActiveSport] = useState((initialSport === "live" ? "football" : initialSport) || "football");
   var [slideDir, setSlideDir] = useState(0); // -1 left, 1 right
   var [listKey, setListKey] = useState(0);
   var tabsRef = useRef(null);
@@ -3794,8 +3930,10 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   // pick / clear a league + reflect it in the URL (/[sport]/[league]) — in place, no navigation
   function selectLeague(l) {
     var sk = (activeSport === "live") ? "football" : activeSport;
+    // leagues belong to football: picking one from the live tab moves the header underline to Futbol
+    if (activeSport === "live") setActiveSport("football");
     setSelectedLeague({ sport: sk, id: l.id, name: l.name, season: l.season, logo: l.logo });
-    pushUrl("/" + activeSport + "/" + slugify(l.name));
+    pushUrl("/" + sk + "/" + slugify(l.name));
   }
   function clearLeague() {
     setSelectedLeague(null);
@@ -4016,8 +4154,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
 
-  var matches = data[(activeSport === "live") ? "football" : activeSport] || [];
-  if (activeSport === "live") matches = matches.filter(function(m){ return m.status === "live"; });
+  var matches = data[activeSport] || [];
   // light mode: paint the top navbar in the brand purple with white content (.mo-navlight)
   var headerPurple = theme === "light";
   return <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
@@ -4157,35 +4294,39 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                 onOpenTeam={function(tm){ setSelectedTeam(tm); }}
                 onOpenPlayer={function(p){ setSelectedPlayer(p); }} />;
               var shown = matches;
-              // carousel: only live + soon-upcoming
-              var featured = shown.filter(function(m){ return m.status === "live" || m.status === "upcoming"; }).slice(0, 6);
+              // carousel: live first, then soon-upcoming
+              var featured = shown.filter(function(m){ return m.status === "live" || m.status === "upcoming"; })
+                .slice().sort(function(a, b){ var r = function(s){ return s === "live" ? 0 : 1; }; return r(a.status) - r(b.status); })
+                .slice(0, 6);
               var lg = featured[0] || shown[0] || {};
-              var sportKey = (activeSport === "live") ? "football" : activeSport;
-              var tree = leagueTree[sportKey] || [];
+              var tree = leagueTree[activeSport] || [];
+              // World Cup season for the "team of the round" box (fallback 2026)
+              var wcSeason = 2026;
+              (data.football || []).forEach(function(m){ if (m.leagueId === 1 && m.season) wcSeason = m.season; });
               var usingLeague = !!selectedLeague;
               return <div>
-                {/* MOBILE: horizontal league strip at the very top */}
-                {!isF1 && <div className="mo-only-mobile"><LeagueStrip groups={tree} t={t}
+                {/* league bar under the header (mobile + desktop): World Cup first, tap -> detail in the main column */}
+                {!isF1 && <LeagueStrip groups={tree} t={t}
                   selectedId={selectedLeague && selectedLeague.id}
                   onSelect={function(l){ selectLeague(l); }}
-                  onClear={clearLeague} /></div>}
-                <div className="mo-cols">
-                {/* LEFT: league tree (desktop) + auto-rotating featured carousel + major stats */}
+                  onClear={clearLeague} />}
+                <div className={"mo-cols" + (usingLeague ? " mo-usingleague" : "")}>
+                {/* LEFT: the match feed (always). Hidden on mobile while a league detail is open. */}
                 <div className="mo-col-left">
-                  {!isF1 && <div className="mo-only-desktop"><LeagueTree groups={tree} loading={leagueTreeLoading && !leagueTree[sportKey]} t={t}
-                    selectedId={selectedLeague && selectedLeague.id}
-                    onSelect={function(l){ selectLeague(l); }} /></div>}
-                  <FeaturedCarousel matches={featured} isF1={isF1} t={t} onOpen={function(m){ setSelectedMatch(m); }} />
-                  <StandoutsBox players={(activeSport === "football" || activeSport === "live") ? standouts : []} t={t}
-                    onOpen={function(){ if (standouts.length) setShowStandouts(true); }} />
-                  {!isF1 && lg.leagueId && <MajorStats leagueId={lg.leagueId} season={lg.season || 2025} t={t} />}
+                  <DayMatchList matches={shown} t={t} isF1={isF1} onOpen={function(m){ setSelectedMatch(m); }} />
                 </div>
-                {/* RIGHT: league detail panel (if a league is picked) or the default list */}
+                {/* RIGHT: the selected league's detail, else the sidebar boxes (aligned below the feed's tabs) */}
                 <div className="mo-col-right">
                   {usingLeague
                     ? <LeagueDetailPanel league={selectedLeague} matches={leagueMatches} matchesLoading={leagueMatchesLoading}
                         t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} onClear={clearLeague} />
-                    : <DayMatchList matches={shown} t={t} isF1={isF1} onOpen={function(m){ setSelectedMatch(m); }} />}
+                    : <div className="mo-sidebar">
+                        <FeaturedCarousel matches={featured} isF1={isF1} t={t} onOpen={function(m){ setSelectedMatch(m); }} />
+                        {activeSport === "football" && <HaftaninTakimi season={wcSeason} t={t} onOpenPlayer={function(p){ setSelectedPlayer(p); }} />}
+                        <StandoutsBox players={activeSport === "football" ? standouts : []} t={t}
+                          onOpen={function(){ if (standouts.length) setShowStandouts(true); }} />
+                        {!isF1 && lg.leagueId && <MajorStats leagueId={lg.leagueId} season={lg.season || 2025} t={t} />}
+                      </div>}
                 </div>
               </div>
               </div>;

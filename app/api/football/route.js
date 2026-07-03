@@ -700,6 +700,58 @@ export async function GET(request) {
     return Response.json({ players: all.slice(0, 3), date: chosen });
   }
 
+  // ── Team of the round (best XI) for a league's current knockout round. ──
+  // Scoped for now to the World Cup Round of 32; move to "Round of 16" by changing the round param.
+  // Finished-match player ratings are immutable, so each fixture is cached long -> recompute is ~free.
+  if (mode === "totw") {
+    const league = searchParams.get("league") || "1";
+    const season = searchParams.get("season") || "2026";
+    const round = (searchParams.get("round") || "Round of 32").trim();
+    const rl = round.toLowerCase();
+    const fxAll = await apiGet("/fixtures?league=" + league + "&season=" + season, 3600);
+    const finished = (fxAll || []).filter(function (it) {
+      const r = (it.league && it.league.round) || "";
+      return r.toLowerCase().indexOf(rl) >= 0 && statusOf(it.fixture.status && it.fixture.status.short) === "finished";
+    });
+    if (!finished.length) return Response.json({ round: round, players: [], formation: null });
+    const byId = {};
+    for (const fx of finished) {
+      const pdata = await apiGet("/fixtures/players?fixture=" + fx.fixture.id, 604800); // immutable -> 7d
+      (pdata || []).forEach(function (entry) {
+        const tname = entry.team && entry.team.name;
+        const tlogo = entry.team && entry.team.logo;
+        (entry.players || []).forEach(function (pp) {
+          const p = pp.player || {};
+          const st = (pp.statistics && pp.statistics[0]) || {};
+          const g = st.games || {};
+          if (g.rating == null) return;
+          const rv = parseFloat(g.rating);
+          if (isNaN(rv)) return;
+          const prev = byId[p.id];
+          if (!prev || rv > prev.rating) {
+            byId[p.id] = {
+              id: p.id, name: p.name || "?",
+              photo: p.photo || (p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null),
+              team: tname || "", teamLogo: tlogo || null, rating: Math.round(rv * 100) / 100,
+              pos: (g.position || "M").charAt(0).toUpperCase(),
+            };
+          }
+        });
+      });
+    }
+    const pool = Object.keys(byId).map(function (k) { return byId[k]; });
+    pool.sort(function (a, b) { return b.rating - a.rating; });
+    // 4-3-3: 1 GK, 4 DEF, 3 MID, 3 FWD by position; fill any shortfall from the best remaining.
+    const bucket = { G: [], D: [], M: [], F: [] };
+    pool.forEach(function (p) { (bucket[p.pos] || bucket.M).push(p); });
+    const need = { G: 1, D: 4, M: 3, F: 3 }, used = {}, xi = [];
+    ["G", "D", "M", "F"].forEach(function (k) {
+      (bucket[k] || []).slice(0, need[k]).forEach(function (p) { xi.push(Object.assign({ slot: k }, p)); used[p.id] = 1; });
+    });
+    if (xi.length < 11) pool.forEach(function (p) { if (xi.length < 11 && !used[p.id]) { xi.push(Object.assign({ slot: p.pos }, p)); used[p.id] = 1; } });
+    return Response.json({ round: round, league: league, formation: "4-3-3", players: xi });
+  }
+
   // ── League tree per sport (flashscore-style country -> leagues) ──
   if (mode === "leagues") {
     const sport = searchParams.get("sport") || "football";
