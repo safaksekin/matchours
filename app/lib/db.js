@@ -190,3 +190,165 @@ export async function addComment(opts) {
   }
   return { data: res.data || null, error: res.error || null };
 }
+
+// ── Predictions & reputation ────────────────────────────────────────────────
+// Save (or replace before kickoff) this user's coupon for a match. One row per user+match.
+export async function savePrediction(opts) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const row = {
+    user_id: uid,
+    match_id: String(opts.matchId),
+    match_ts: opts.matchTs || null,
+    league_id: opts.leagueId != null ? String(opts.leagueId) : null,
+    sport: opts.sport || "football",
+    picks: opts.picks || {},
+    meta: opts.meta || null,
+    scored: false,
+    points: null,
+  };
+  const { data, error } = await supabase.from("predictions")
+    .upsert(row, { onConflict: "user_id,match_id" })
+    .select("*").single();
+  return { data: data || null, error: error || null };
+}
+
+// Delete this user's coupon for a match (used to cancel a prediction before kickoff).
+export async function deletePrediction(matchId) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const { error } = await supabase.from("predictions").delete().eq("user_id", uid).eq("match_id", String(matchId));
+  return { error: error || null };
+}
+
+// This user's coupon for a match (null if none yet).
+export async function fetchMyPrediction(matchId) {
+  const uid = await getUserId();
+  if (!uid) return null;
+  const { data } = await supabase.from("predictions")
+    .select("*").eq("user_id", uid).eq("match_id", String(matchId)).maybeSingle();
+  return data || null;
+}
+
+// How many people predicted each match (batched, for the match-list "predictors" badge).
+export async function fetchPredictionCounts(matchIds) {
+  const ids = Array.from(new Set((matchIds || []).map(String).filter(Boolean)));
+  if (!ids.length) return {};
+  const { data, error } = await supabase.rpc("match_prediction_counts", { p_matches: ids });
+  if (error) return {};
+  const map = {};
+  (data || []).forEach(function (r) { map[String(r.match_id)] = Number(r.cnt); });
+  return map;
+}
+
+// This user's coupons for a batch of matches (for the quick 1X2 on feed cards). Keyed by match_id.
+export async function fetchMyPredictionsFor(matchIds) {
+  const uid = await getUserId();
+  if (!uid) return {};
+  const ids = Array.from(new Set((matchIds || []).map(String).filter(Boolean)));
+  if (!ids.length) return {};
+  const { data } = await supabase.from("predictions")
+    .select("*").eq("user_id", uid).in("match_id", ids);
+  const map = {};
+  (data || []).forEach(function (r) { map[String(r.match_id)] = r; });
+  return map;
+}
+
+// This user's coupons (newest first) + total reputation points, for the profile / "my predictions".
+export async function fetchMyPredictions(limit) {
+  const uid = await getUserId();
+  if (!uid) return { items: [], points: 0, played: 0 };
+  const { data } = await supabase.from("predictions")
+    .select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(limit || 50);
+  const rows = data || [];
+  let points = 0, played = 0;
+  rows.forEach(function (r) { if (r.scored) { points += r.points || 0; played += 1; } });
+  return { items: rows, points: points, played: played };
+}
+
+// Community average player rating for a match (for the post-match consensus box).
+export async function fetchRatingConsensus(matchId) {
+  const { data, error } = await supabase.rpc("match_rating_consensus", { p_match: String(matchId) });
+  if (error) return {};
+  const map = {};
+  (data || []).forEach(function (r) { map[String(r.target_id)] = { avg: Number(r.avg_rating), cnt: Number(r.cnt) }; });
+  return map;
+}
+// The user's rating fingerprint for Football DNA (count + avg + divergence from the community).
+export async function fetchUserRatingProfile(userId) {
+  const uid = userId || (await getUserId());
+  if (!uid) return null;
+  const { data, error } = await supabase.rpc("user_rating_profile", { p_user: uid });
+  if (error || !data || !data[0]) return { n: 0, avg_rating: null, avg_diff: null, avg_absdiff: null };
+  const r = data[0];
+  return { n: Number(r.n) || 0, avg_rating: r.avg_rating != null ? Number(r.avg_rating) : null,
+    avg_diff: r.avg_diff != null ? Number(r.avg_diff) : null, avg_absdiff: r.avg_absdiff != null ? Number(r.avg_absdiff) : null };
+}
+
+// This user's own player ratings for a match (target_id -> {rating, name}).
+export async function fetchMyMatchRatings(matchId) {
+  const uid = await getUserId();
+  if (!uid) return {};
+  const { data } = await supabase.from("ratings").select("target_id, target_name, rating")
+    .eq("user_id", uid).eq("match_id", String(matchId)).eq("target_type", "player");
+  const map = {};
+  (data || []).forEach(function (r) { map[String(r.target_id)] = { rating: Number(r.rating), name: r.target_name }; });
+  return map;
+}
+
+// Leaderboard (global, or within a community league). weekly=true -> this week only.
+export async function fetchPredLeaderboard(opts) {
+  opts = opts || {};
+  const fn = opts.leagueId ? "pred_leaderboard_league" : "pred_leaderboard_global";
+  const args = opts.leagueId
+    ? { p_league: opts.leagueId, p_weekly: !!opts.weekly, p_limit: opts.limit || 100 }
+    : { p_weekly: !!opts.weekly, p_limit: opts.limit || 100 };
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) return [];
+  return data || [];
+}
+
+// ── Community leagues ───────────────────────────────────────────────────────
+function randomLeagueCode() {
+  const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no confusable chars
+  let s = ""; for (let i = 0; i < 6; i++) s += abc[Math.floor(Math.random() * abc.length)];
+  return s;
+}
+export async function createPredLeague(name) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const clean = String(name || "").trim();
+  if (clean.length < 2) return { error: "too_short" };
+  // retry a couple of times on the tiny chance the random code collides
+  let last = null;
+  for (let i = 0; i < 4; i++) {
+    const code = randomLeagueCode();
+    const { data, error } = await supabase.from("pred_leagues")
+      .insert({ name: clean, code: code, owner_id: uid }).select("*").single();
+    if (!error && data) {
+      await supabase.from("pred_league_members").insert({ league_id: data.id, user_id: uid });
+      return { data: data, error: null };
+    }
+    last = error;
+    if (!/duplicate|unique|code/i.test(String((error && error.message) || ""))) break;
+  }
+  return { error: last || "failed" };
+}
+export async function joinPredLeague(code) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const clean = String(code || "").trim().toUpperCase();
+  const { data: lg } = await supabase.from("pred_leagues").select("*").eq("code", clean).maybeSingle();
+  if (!lg) return { error: "not_found" };
+  const { error } = await supabase.from("pred_league_members")
+    .upsert({ league_id: lg.id, user_id: uid }, { onConflict: "league_id,user_id" });
+  return { data: lg, error: error || null };
+}
+export async function fetchMyPredLeagues() {
+  const uid = await getUserId();
+  if (!uid) return [];
+  const { data } = await supabase.from("pred_league_members")
+    .select("league_id, pred_leagues(id, name, code, owner_id)")
+    .eq("user_id", uid);
+  return (data || []).map(function (r) { return r.pred_leagues; }).filter(Boolean);
+}

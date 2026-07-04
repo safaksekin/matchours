@@ -4,7 +4,10 @@ import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
 import { supabase } from "./lib/supabaseClient";
 import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addComment as dbAddComment, fetchCommunityFeed,
-  fetchCommentCounts, fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername } from "./lib/db";
+  fetchCommentCounts, fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername,
+  savePrediction, fetchMyPrediction, fetchMyPredictionsFor, fetchPredictionCounts, fetchMyPredictions, fetchPredLeaderboard,
+  createPredLeague, joinPredLeague, fetchMyPredLeagues, getUserId, deletePrediction,
+  fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -13,6 +16,7 @@ function favKey(kind, id) { return kind + ":" + String(id); }
 function favHas(kind, id) { return !!FAV.map[favKey(kind, id)]; }
 function favEmit() { FAV.listeners.forEach(function (fn) { fn(); }); }
 function favLoad() {
+  try { predReset(); } catch (e) {} // login/logout changed -> reload the user's feed predictions too
   fetchFavorites().then(function (rows) {
     var m = {}; (rows || []).forEach(function (r) { m[favKey(r.kind, r.ref_id)] = r; });
     FAV.map = m; FAV.loaded = true; favEmit();
@@ -90,6 +94,204 @@ function useCommentCount(id) {
   }, [id]);
   var v = CMT.cache[String(id)];
   return (v == null || v < 0) ? 0 : v;
+}
+
+// Per-match prediction store: batch-loads the signed-in user's coupons for visible cards so the
+// quick 1X2 on the feed reflects (and updates) their pick without a query per card.
+var PRED = { cache: {}, pending: new Set(), listeners: new Set(), timer: null };
+function predEmit() { PRED.listeners.forEach(function (fn) { fn(); }); }
+function predReset() { PRED.cache = {}; predEmit(); } // called on login change (see favLoad)
+function predFlush() {
+  PRED.timer = null;
+  var ids = Array.from(PRED.pending); PRED.pending.clear();
+  if (!ids.length) return;
+  if (!FAV.loggedIn) { ids.forEach(function (id) { PRED.cache[id] = null; }); predEmit(); return; }
+  fetchMyPredictionsFor(ids).then(function (map) {
+    ids.forEach(function (id) { PRED.cache[id] = (map && map[id]) || null; });
+    predEmit();
+  }).catch(function () { ids.forEach(function (id) { PRED.cache[id] = null; }); predEmit(); });
+}
+function predRequest(id) {
+  if (id == null) return;
+  var k = String(id);
+  if (k in PRED.cache) return; // have it or in-flight
+  PRED.cache[k] = undefined; PRED.pending.add(k);
+  if (!PRED.timer) PRED.timer = setTimeout(predFlush, 60);
+}
+function predInvalidate(id) { if (id != null) { delete PRED.cache[String(id)]; } }
+// One-tap 1X2 from a card: merge into any existing coupon (keeps MOTM/ratings) and save.
+function predSet(match, onextwo) {
+  if (!FAV.loggedIn) { if (FAV.onNeedLogin) FAV.onNeedLogin(); return; }
+  var k = String(match.id);
+  var row = PRED.cache[k] || {};
+  var picks = Object.assign({}, row.picks || {}, { onextwo: onextwo });
+  // toggled fully off (no 1X2, no MOTM, no ratings) -> delete the coupon so no empty row lingers
+  if (!picks.onextwo && !picks.motm && !(picks.ratings && picks.ratings.length)) {
+    PRED.cache[k] = null; predEmit();
+    deletePrediction(match.id);
+    return;
+  }
+  PRED.cache[k] = Object.assign({}, row, { picks: picks }); predEmit(); // optimistic
+  savePrediction({
+    matchId: match.id,
+    matchTs: match.ts ? new Date(match.ts).toISOString() : null,
+    leagueId: match.leagueId, picks: picks, meta: matchSnap(match),
+  }).then(function (res) { if (res && res.data) { PRED.cache[k] = res.data; predEmit(); } });
+}
+function usePredPick(id) {
+  var [, force] = useState(0);
+  useEffect(function () {
+    var fn = function () { force(function (x) { return x + 1; }); };
+    PRED.listeners.add(fn); predRequest(id);
+    return function () { PRED.listeners.delete(fn); };
+  }, [id]);
+  var row = PRED.cache[String(id)];
+  return (row && row.picks) ? row.picks.onextwo : null;
+}
+
+// Batched "how many people predicted this match" counts (match-list badge), same pattern as comments.
+var PCNT = { cache: {}, pending: new Set(), listeners: new Set(), timer: null };
+function pcntEmit() { PCNT.listeners.forEach(function (fn) { fn(); }); }
+function pcntFlush() {
+  PCNT.timer = null;
+  var ids = Array.from(PCNT.pending); PCNT.pending.clear();
+  if (!ids.length) return;
+  fetchPredictionCounts(ids).then(function (map) {
+    ids.forEach(function (id) { PCNT.cache[id] = (map && map[id]) || 0; }); pcntEmit();
+  }).catch(function () { ids.forEach(function (id) { PCNT.cache[id] = 0; }); pcntEmit(); });
+}
+function pcntRequest(id) {
+  if (id == null) return; var k = String(id);
+  if (k in PCNT.cache) return; PCNT.cache[k] = undefined; PCNT.pending.add(k);
+  if (!PCNT.timer) PCNT.timer = setTimeout(pcntFlush, 60);
+}
+function usePredictionCount(id) {
+  var [, force] = useState(0);
+  useEffect(function () {
+    var fn = function () { force(function (x) { return x + 1; }); };
+    PCNT.listeners.add(fn); pcntRequest(id);
+    return function () { PCNT.listeners.delete(fn); };
+  }, [id]);
+  var v = PCNT.cache[String(id)];
+  return (v == null) ? 0 : v;
+}
+
+// Match-list badge: how many people predicted this match (with a "users" icon).
+function PredCount({ match }) {
+  var c = usePredictionCount(match && match.id);
+  if (!match || match.homeId == null) return null; // football matches only
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: COLORS.textMuted, fontSize: 12, fontWeight: 700, flexShrink: 0, paddingLeft: 2 }}>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+    {c}
+  </span>;
+}
+
+// Quick 1X2 predict widget on a feed card — the retention hook: predict without opening the match.
+function Quick1x2({ match, layout }) {
+  var fav = useFavorites(); // re-render on login
+  var pick = usePredPick(match.id);
+  if (!match || match.status !== "upcoming" || match.homeId == null) return null;
+  var vertical = layout === "below"; // carousel: full-width row; card: compact cluster on the right
+  function btn(v) {
+    var on = pick === v;
+    return <button key={v} onClick={function (e) { e.stopPropagation(); predSet(match, on ? null : v); }}
+      style={{ flex: vertical ? 1 : "0 0 auto", minWidth: vertical ? 0 : 30, padding: vertical ? "9px 0" : "5px 0", width: vertical ? "auto" : 30,
+        borderRadius: vertical ? 12 : 8, cursor: "pointer", fontFamily: FONT, fontSize: vertical ? 14 : 12, fontWeight: 800,
+        border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : (vertical ? COLORS.card : "transparent"),
+        boxShadow: on ? "none" : "none", color: on ? "#fff" : COLORS.textSecondary, WebkitTapHighlightColor: "transparent",
+        transition: "background 0.2s ease" }}>{v}</button>;
+  }
+  return <div onClick={function (e) { e.stopPropagation(); }}
+    style={{ display: "flex", gap: vertical ? 8 : 4, flexShrink: 0, alignItems: "center" }}>
+    {btn("1")}{btn("X")}{btn("2")}
+  </div>;
+}
+
+// Per-device "seen" set for scored-coupon notifications (drives the bell's unread badge).
+function notifSeen(id) { try { return (localStorage.getItem("mo_notif_seen") || "").split(",").indexOf(String(id)) >= 0; } catch (e) { return false; } }
+function notifMarkSeen(ids) {
+  try {
+    var arr = (localStorage.getItem("mo_notif_seen") || "").split(",").filter(Boolean);
+    ids.forEach(function (id) { if (arr.indexOf(String(id)) < 0) arr.push(String(id)); });
+    localStorage.setItem("mo_notif_seen", arr.slice(-400).join(","));
+  } catch (e) {}
+}
+
+// Branded splash: our logo on the navbar-purple. Static while loading; fades out once the app mounts.
+function Splash({ fade }) {
+  var [gone, setGone] = useState(false);
+  var [faded, setFaded] = useState(false);
+  useEffect(function () {
+    if (!fade) return;
+    var r = requestAnimationFrame(function () { setFaded(true); });
+    var id = setTimeout(function () { setGone(true); }, 650);
+    return function () { cancelAnimationFrame(r); clearTimeout(id); };
+  }, [fade]);
+  if (fade && gone) return null;
+  return <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 9999,
+    background: "linear-gradient(135deg, #7A52E6 0%, #5A33CC 52%, #4322A0 100%)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    opacity: (fade && faded) ? 0 : 1, transition: "opacity 0.55s ease", pointerEvents: (fade && faded) ? "none" : "auto" }}>
+    <img src="/logo-light.png" alt="fikstür" style={{ height: 92, maxWidth: "76%", objectFit: "contain" }} />
+  </div>;
+}
+
+// Notifications bell (header): shows your scored coupons + points earned. In-app for now;
+// real push (browser/OS) is a later phase (needs a service worker + web-push).
+function NotificationsBell({ loggedIn, onOpenMatch, matches }) {
+  useFavorites(); // re-render when favorites change
+  var [coupons, setCoupons] = useState([]);
+  var [open, setOpen] = useState(false);
+  var [, force] = useState(0);
+  useEffect(function () {
+    if (!loggedIn) { setCoupons([]); return; }
+    var cancelled = false;
+    fetch("/api/predict/score").catch(function () {}).finally(function () {
+      fetchMyPredictions(40).then(function (r) { if (!cancelled) setCoupons((r.items || []).filter(function (x) { return x.scored; })); }).catch(function () {});
+    });
+    return function () { cancelled = true; };
+  }, [loggedIn]);
+  if (!loggedIn) return null;
+  // merge: your scored coupons + finished results of your favourite teams
+  var couponNotifs = coupons.map(function (x) { var m = x.meta || {}; return { id: "cp:" + x.id, kind: "coupon", home: m.home, away: m.away, points: x.points || 0, openM: m.id ? m : { id: x.match_id }, ts: m.ts || 0 }; });
+  var resultNotifs = (matches || []).filter(function (m) {
+    return m.status === "finished" && m.homeId != null && (favHas("team", m.homeId) || favHas("team", m.awayId));
+  }).map(function (m) { return { id: "rs:" + m.id, kind: "result", home: m.home, away: m.away, score: m.score, openM: m, ts: m.ts || 0 }; });
+  var notifs = couponNotifs.concat(resultNotifs).sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }).slice(0, 30);
+  var unread = notifs.filter(function (x) { return !notifSeen(x.id); }).length;
+  function toggle() {
+    var willOpen = !open; setOpen(willOpen);
+    if (willOpen && notifs.length) { notifMarkSeen(notifs.map(function (x) { return x.id; })); force(function (n) { return n + 1; }); }
+  }
+  return <div style={{ position: "relative" }}>
+    <button onClick={toggle} aria-label="bildirimler" style={{ width: 38, height: 38, borderRadius: 12, background: COLORS.cardAlt, border: "none",
+      cursor: "pointer", color: COLORS.textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", WebkitTapHighlightColor: "transparent" }}>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
+      {unread > 0 && <span style={{ position: "absolute", top: 5, right: 5, minWidth: 15, height: 15, borderRadius: 8, background: COLORS.red, color: "#fff",
+        fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unread > 9 ? "9+" : unread}</span>}
+    </button>
+    {open && <>
+      <div onClick={function () { setOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+      <div style={{ position: "absolute", top: "112%", right: 0, zIndex: 61, width: "min(320px, 86vw)", background: COLORS.card,
+        border: "1px solid " + COLORS.border, borderRadius: 14, boxShadow: "0 12px 36px rgba(20,40,40,0.30)", overflow: "hidden", maxHeight: "70vh", overflowY: "auto" }}>
+        <div style={{ padding: "12px 14px", borderBottom: "1px solid " + COLORS.border, color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>Bildirimler</div>
+        {notifs.length === 0
+          ? <div style={{ padding: "22px 14px", color: COLORS.textMuted, fontSize: 13, textAlign: "center" }}>Henüz bildirim yok. Kuponların puanlanınca ve favori takımların oynayınca burada görünür.</div>
+          : notifs.map(function (x) {
+            var isCoupon = x.kind === "coupon";
+            return <div key={x.id} onClick={function () { setOpen(false); if (onOpenMatch) onOpenMatch(x.openM); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+              <span style={{ width: 40, height: 34, borderRadius: 10, background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: isCoupon ? 12 : 13, flexShrink: 0 }}>{isCoupon ? "+" + x.points : (x.score || "•")}</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{(x.home || "") + " - " + (x.away || "")}</div>
+                <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{isCoupon ? "Kuponun puanlandı · +" + x.points + " itibar" : "Favori takımın oynadı · maç sonu"}</div>
+              </div>
+            </div>; })}
+      </div>
+    </>}
+  </div>;
 }
 
 // Track (per device) which matches THIS user generated an AI preview for, so it auto-shows
@@ -214,7 +416,7 @@ const I18N = {
     profile: "Profil", back: "Geri", member: "matchours üyesi", pro: "PRO üye",
     followedMatches: "Takip Edilen", commentsCount: "Yorum", favLeague: "Favori Lig", membership: "Üyelik",
     favTeams: "Favori Takımlar", recentActivity: "Son Aktivite", logout: "Çıkış Yap",
-    navMatch: "Maç", navSearch: "Ara", navCommunity: "Topluluk", navFavorites: "Favoriler", navProfile: "Profil",
+    navMatch: "Maç", navSearch: "Ara", navCommunity: "Topluluk", navFavorites: "Favoriler", navProfile: "Profil", navPredictions: "Tahminler",
     community: "Topluluk", favorites: "Favoriler", favPlayers: "Favori Oyuncular", recentComments: "Son Yorumların",
     noFavorites: "Henüz favori yok. Takım veya oyuncuların yanındaki kaydet butonuna dokun.",
     favLoginPrompt: "Favorilerini görmek için giriş yap.", noComments: "Henüz yorum yok. İlk yorumu sen yap!",
@@ -252,7 +454,7 @@ const I18N = {
     profile: "Profile", back: "Back", member: "matchours member", pro: "PRO member",
     followedMatches: "Followed", commentsCount: "Comments", favLeague: "Favorite League", membership: "Member Since",
     favTeams: "Favorite Teams", recentActivity: "Recent Activity", logout: "Log Out",
-    navMatch: "Matches", navSearch: "Search", navCommunity: "Community", navFavorites: "Favorites", navProfile: "Profile",
+    navMatch: "Matches", navSearch: "Search", navCommunity: "Community", navFavorites: "Favorites", navProfile: "Profile", navPredictions: "Predictions",
     community: "Community", favorites: "Favorites", favPlayers: "Favorite Players", recentComments: "Your Recent Comments",
     noFavorites: "No favorites yet. Tap the save button next to a team or player.",
     favLoginPrompt: "Sign in to see your favorites.", noComments: "No comments yet. Be the first!",
@@ -290,7 +492,7 @@ const I18N = {
     profile: "Profil", back: "Zuruck", member: "matchours Mitglied", pro: "PRO Mitglied",
     followedMatches: "Verfolgt", commentsCount: "Kommentare", favLeague: "Lieblingsliga", membership: "Mitglied seit",
     favTeams: "Lieblingsteams", recentActivity: "Letzte Aktivitat", logout: "Abmelden",
-    navMatch: "Spiele", navSearch: "Suche", navCommunity: "Community", navFavorites: "Favoriten", navProfile: "Profil",
+    navMatch: "Spiele", navSearch: "Suche", navCommunity: "Community", navFavorites: "Favoriten", navProfile: "Profil", navPredictions: "Tipps",
     community: "Community", favorites: "Favoriten", favPlayers: "Lieblingsspieler", recentComments: "Deine letzten Kommentare",
     noFavorites: "Noch keine Favoriten. Tippe auf das Speichern-Symbol neben einem Team oder Spieler.",
     favLoginPrompt: "Melde dich an, um deine Favoriten zu sehen.", noComments: "Noch keine Kommentare. Sei der Erste!",
@@ -516,10 +718,12 @@ function SlidePanel({ slideKey, dir, children }) {
 function SportTab({ active, onClick, icon, label, live }) {
   var [hover, setHover] = useState(false);
   var [imgOk, setImgOk] = useState(true);
-  var color = active ? COLORS.accent : (hover ? COLORS.textPrimary : COLORS.textSecondary);
+  // dark mode: inactive tab names in the underline's purple (not grey); light navbar keeps white via .mo-navlight
+  var color = active ? COLORS.accent : (hover ? COLORS.textPrimary : (CURRENT_THEME === "dark" ? COLORS.accent : COLORS.textSecondary));
   return <button onClick={onClick} onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
     style={{ flexShrink: 0, position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
-      padding: "12px 16px 9px", border: "none", cursor: "pointer", background: "transparent",
+      padding: "12px 16px 9px", border: "none", cursor: "pointer",
+      background: hover ? "rgba(128,128,145,0.16)" : "transparent", transition: "background 0.2s ease",
       borderRadius: 16, WebkitTapHighlightColor: "transparent", fontFamily: FONT,
       minWidth: 64 }}>
     <span style={{ position: "relative", zIndex: 1, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -583,7 +787,7 @@ function CommentSection({ match, t }) {
       <input value={v} onChange={function(e){ setV(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") submit(); }}
         placeholder={t.writeComment} style={{ flex: 1, padding: "9px 13px", background: COLORS.cardAlt,
         border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", borderRadius: 12,
+      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accent, boxShadow: "none", border: "none", borderRadius: 12,
         color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.send}</button>
     </div>
     {list.length === 0 && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>—</div>}
@@ -793,7 +997,7 @@ function GoalAssistIcons({ g, a, style }) {
   </span>;
 }
 
-function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals, assists, onPlayerClick }) {
+function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals, assists, onPlayerClick, highlight }) {
   var starting = lineup.starting || [];
   var rows = {};
   var hasGrid = false;
@@ -904,7 +1108,9 @@ function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals,
                 cursor: clickable ? "pointer" : "default", WebkitTapHighlightColor: "transparent",
                 transform: "rotateX(-24deg)", transformOrigin: "bottom center" }}>
               <div style={{ position: "relative" }}>
-                <PlayerHead photo={(pdata && pdata.photo) || p.photo} number={p.shirt} name={p.name} out={out} />
+                <span style={{ display: "inline-block", borderRadius: "50%", boxShadow: (highlight && highlight[p.id]) ? "0 0 0 3px " + COLORS.accent : "none" }}>
+                  <PlayerHead photo={(pdata && pdata.photo) || p.photo} number={p.shirt} name={p.name} out={out} />
+                </span>
                 {ratings && ratings[p.id] != null && <RatingBadge rating={ratings[p.id]} style={{ position: "absolute", bottom: -5, left: "50%",
                   transform: "translateX(-50%)", minWidth: 0, padding: "1px 6px", fontSize: 12, borderRadius: 6,
                   boxShadow: "0 1px 3px rgba(0,0,0,0.45)" }} />}
@@ -935,13 +1141,14 @@ function wxLabel(code, t) {
 }
 
 // IMDb-style rating slider (0-10). Fill color sweeps red -> green -> purple smoothly with value.
-function RatingSlider({ value, onChange }) {
+function RatingSlider({ value, onChange, min }) {
   var ref = useRef(null);
+  var lo = min || 0; // floor (ratings realistically start ~3.0)
   function setFromX(clientX) {
     var el = ref.current; if (!el) return;
     var r = el.getBoundingClientRect();
     var pct = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    onChange(Math.round(pct * 100) / 10);
+    onChange(Math.round((lo + pct * (10 - lo)) * 10) / 10);
   }
   function down(e) {
     e.preventDefault();
@@ -951,7 +1158,7 @@ function RatingSlider({ value, onChange }) {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
-  var pct = value / 10 * 100;
+  var pct = Math.min(100, Math.max(0, (value - lo) / (10 - lo) * 100));
   // skewed so red dominates the low end: ~0-3.5 stays red/orange, then green, then purple
   var hue = Math.round(Math.pow(value / 10, 1.7) * 280); // 0 red -> green -> 280 purple
   var col = "hsl(" + hue + ", 78%, 52%)";
@@ -1085,7 +1292,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
         <RatingSlider value={userRating} onChange={function(v){ setUserRating(v); setRatingSubmitted(false); }} />
         <button onClick={submitRating} disabled={ratingSubmitted}
           style={{ marginTop: 12, width: "100%", padding: "10px 16px", borderRadius: 12, border: "none",
-            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accentGrad, boxShadow: ratingSubmitted ? "none" : COLORS.accentGlow, color: ratingSubmitted ? COLORS.textSecondary : "#fff",
+            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accent, boxShadow: ratingSubmitted ? "none" : "none", color: ratingSubmitted ? COLORS.textSecondary : "#fff",
             fontWeight: 800, fontSize: 14, cursor: ratingSubmitted ? "default" : "pointer", fontFamily: FONT, transition: "all 0.2s",
             WebkitTapHighlightColor: "transparent" }}>
           {ratingSubmitted ? (t.rateSaved + " · " + userRating.toFixed(1)) : t.rateSubmit}
@@ -1100,7 +1307,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
             onKeyDown={function(e){ if (e.key === "Enter") addComment(); }}
             placeholder={t.writeComment} style={{ flex: 1, minWidth: 0, padding: "9px 13px", background: COLORS.cardAlt,
               border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", borderRadius: 12,
+          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accent, boxShadow: "none", border: "none", borderRadius: 12,
             color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.send}</button>
         </div>
         {pComments.map(function(c, i){ return <div key={i} style={{ marginTop: 8, padding: "10px 12px", background: COLORS.cardAlt,
@@ -1114,10 +1321,348 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
   </div>, document.body);
 }
 
+// Prediction coupon: 1X2 + man of the match + 3 player-rating picks. Editable until kickoff,
+// then locked; after scoring it shows the points earned. The app's marquee retention hook.
+function PredictionCoupon({ match, t }) {
+  var fav = useFavorites(); // re-render on login change
+  var locked = match.status !== "upcoming"; // deadline = kickoff
+  var [mine, setMine] = useState(undefined); // undefined=loading | null=none | row
+  var [cand, setCand] = useState(null);
+  var [onextwo, setOnextwo] = useState(null);
+  var [motm, setMotm] = useState(null);
+  var [ratings, setRatings] = useState([]); // up to 3: 1 system suggestion + 2 user-picked
+  var [pickFor, setPickFor] = useState(null); // "motm" | "rating" | null
+  var [pside, setPside] = useState("home"); // which team's pitch is shown for rating picks
+  var [ratingEdit, setRatingEdit] = useState(null); // player being rated in the editor sheet
+  var [editVal, setEditVal] = useState(3.0);
+  var [q, setQ] = useState("");
+  var [saving, setSaving] = useState(false);
+  var [saved, setSaved] = useState(false);
+
+  useEffect(function(){
+    var cancelled = false;
+    if (!match.id || !fav.loggedIn) { setMine(fav.loggedIn ? undefined : null); return; }
+    fetchMyPrediction(match.id).then(function(row){ if (!cancelled) setMine(row || null); }).catch(function(){ if (!cancelled) setMine(null); });
+    return function(){ cancelled = true; };
+  }, [match.id, fav.loggedIn]);
+
+  useEffect(function(){
+    if (mine && mine.picks) {
+      setOnextwo(mine.picks.onextwo || null);
+      setMotm(mine.picks.motm || null);
+      setRatings((mine.picks.ratings || []).map(function(r){ return { id: r.id, name: r.name, photo: r.photo, team: r.team, teamId: r.teamId, val: r.pred }; }));
+    }
+  }, [mine]);
+
+  // finished match with an unscored coupon -> score it now, then show the points
+  useEffect(function(){
+    if (!locked || !mine || mine.scored || match.status !== "finished" || !match.id) return;
+    fetch("/api/predict/score?match=" + match.id)
+      .then(function(){ return fetchMyPrediction(match.id); })
+      .then(function(row){ if (row) setMine(row); }).catch(function(){});
+  }, [locked, match.id, mine && mine.scored]);
+
+  useEffect(function(){
+    if (locked || !fav.loggedIn || !match.id || cand) return;
+    fetch("/api/football?mode=predcandidates&fixture=" + match.id + "&home=" + (match.homeId || "") + "&away=" + (match.awayId || ""))
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        j = j || { players: [], rating: [] };
+        setCand(j);
+        // note: the system's star suggestion (j.rating[0]) is shown pinned above the pitch and is
+        // always ringed — it is NOT auto-added to the user's picks (rating it is optional).
+      })
+      .catch(function(){ setCand({ players: [], rating: [] }); });
+  }, [locked, fav.loggedIn, match.id]);
+
+  function save() {
+    if (!fav.loggedIn) { if (FAV.onNeedLogin) FAV.onNeedLogin(); return; }
+    if (!onextwo && !motm && !(ratings && ratings.length) && !mine) return;
+    setSaving(true);
+    savePrediction({
+      matchId: match.id,
+      matchTs: match.ts ? new Date(match.ts).toISOString() : null,
+      leagueId: match.leagueId,
+      picks: {
+        onextwo: onextwo || null,
+        motm: motm ? { id: motm.id, name: motm.name } : null,
+        ratings: (ratings || []).map(function(r){ return { id: r.id, name: r.name, photo: r.photo, team: r.team, teamId: r.teamId, pred: Math.round(r.val * 10) / 10 }; }),
+      },
+      meta: matchSnap(match),
+    }).then(function(res){
+      setSaving(false);
+      if (!res.error) { setSaved(true); setMine(res.data || {}); predInvalidate(match.id); setTimeout(function(){ setSaved(false); }, 1800); }
+    });
+  }
+
+  // purple tint stays, but flat (no bordered "card"). The tab already says "Tahmin", so no header label.
+  var box = { background: COLORS.glassPurple, borderRadius: 14, padding: "14px 16px" };
+  var head = locked ? <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+    <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.textMuted, background: COLORS.cardAlt, padding: "1px 7px", borderRadius: 6 }}>KİLİTLİ</span>
+  </div> : null;
+
+  // not logged in -> prompt (only pre-kickoff)
+  if (!fav.loggedIn) {
+    if (locked) return null;
+    return <div style={{ marginBottom: 16 }}>{head}
+      <div style={box}><div style={{ color: COLORS.textSecondary, fontSize: 13 }}>Bu maça tahmin yap, tuttukça itibar puanı kazan.
+        <button onClick={function(){ if (FAV.onNeedLogin) FAV.onNeedLogin(); }} style={{ marginLeft: 8, padding: "6px 12px", background: COLORS.accent, boxShadow: "none", color: "#fff", border: "none", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Giriş yap</button>
+      </div></div>
+    </div>;
+  }
+
+  // locked (live/finished): show my coupon read-only + points if scored
+  if (locked) {
+    if (mine === undefined) return null;
+    if (!mine) return null; // didn't predict -> nothing
+    return <div style={{ marginBottom: 16 }}>{head}
+      <div style={box}>
+        {mine.scored
+          ? <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: COLORS.accent }}>+{mine.points || 0}</span>
+              <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 700 }}>itibar puanı kazandın</span>
+            </div>
+          : <div style={{ color: COLORS.textMuted, fontSize: 12.5, marginBottom: 10 }}>Kupon kilitlendi — maç bitince otomatik puanlanacak.</div>}
+        <CouponSummary picks={mine.picks} match={match} t={t} />
+      </div>
+    </div>;
+  }
+
+  // editable (upcoming)
+  var players = (cand && cand.players) || [];
+  var sysPlayer = (cand && cand.rating && cand.rating[0]) || null; // pinned suggestion (always shown/ringed)
+  var sysId = sysPlayer && sysPlayer.id;
+  var pickedIds = {}; (ratings || []).forEach(function(r){ pickedIds[r.id] = 1; });
+  function listFor(kind){
+    var base = kind === "rating" ? players.filter(function(p){ return !pickedIds[p.id]; }) : players;
+    return q ? base.filter(function(p){ return (p.name || "").toLowerCase().indexOf(q.toLowerCase()) >= 0; }) : base;
+  }
+  function picker(kind, onPick){
+    var fl = listFor(kind);
+    return <div style={{ marginBottom: 14 }}>
+      <input value={q} onChange={function(e){ setQ(e.target.value); }} placeholder="Oyuncu ara…" autoFocus
+        style={{ width: "100%", padding: "8px 12px", borderRadius: 10, border: "1px solid " + COLORS.border, background: COLORS.card,
+          color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT, boxSizing: "border-box", marginBottom: 6 }} />
+      <div className="mo-scroll" style={{ maxHeight: 210, overflowY: "auto" }}>
+        {fl.length === 0 ? <div style={{ color: COLORS.textMuted, fontSize: 12, padding: "10px 4px" }}>{cand ? "Oyuncu bulunamadı." : "Yükleniyor…"}</div>
+          : fl.slice(0, 60).map(function(p){
+            return <div key={p.id} onClick={function(){ onPick(p); setPickFor(null); setQ(""); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 6px", borderRadius: 10, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+              <PredHead photo={p.photo} size={26} />
+              <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+              <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{locTeam(p.team, t)}</span>
+            </div>; })}
+      </div>
+    </div>;
+  }
+  function pill(val, label, sub){
+    var on = onextwo === val;
+    return <button onClick={function(){ setOnextwo(on ? null : val); }} style={{ flex: 1, padding: "9px 4px", borderRadius: 12, cursor: "pointer",
+      border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : COLORS.card, boxShadow: on ? "none" : "none",
+      color: on ? "#fff" : COLORS.textPrimary, fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+      <div style={{ fontSize: 15, fontWeight: 800 }}>{label}</div>
+      <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
+    </button>;
+  }
+  function addUserRating(p){ setRatings(function(prev){ return prev.length >= 3 ? prev : prev.concat([{ id: p.id, name: p.name, photo: p.photo, team: p.team, teamId: p.teamId, val: 3.0 }]); }); }
+  function removeRating(i){ setRatings(function(prev){ return prev.filter(function(_, xi){ return xi !== i; }); }); }
+  // tap a player on the pitch -> open the rating editor (a focused "player detail"-like sheet)
+  var existingRating = function(id){ return (ratings || []).find(function(x){ return String(x.id) === String(id); }); };
+  function openRatingEditor(p){
+    var ex = existingRating(p.id);
+    var isSys = sysId != null && String(p.id) === String(sysId);
+    if (!ex && !isSys) { // 2 user picks max (the system suggestion is the optional 3rd)
+      var nonSys = (ratings || []).filter(function(x){ return String(x.id) !== String(sysId); }).length;
+      if (nonSys >= 2) return;
+    }
+    setRatingEdit(p); setEditVal(ex ? ex.val : 3.0);
+  }
+  function applyRating(p, v){
+    setRatings(function(prev){
+      var idx = prev.findIndex(function(x){ return String(x.id) === String(p.id); });
+      if (idx >= 0) return prev.map(function(x, xi){ return xi === idx ? Object.assign({}, x, { val: v }) : x; });
+      if (prev.length >= 3) return prev;
+      return prev.concat([{ id: p.id, name: p.name, photo: p.photo, team: p.team, teamId: p.teamId, val: v }]);
+    });
+  }
+  function removeRatingById(id){ setRatings(function(prev){ return prev.filter(function(x){ return String(x.id) !== String(id); }); }); }
+  return <div style={{ marginBottom: 16 }}>{head}
+    <div style={box}>
+      {/* 1X2 */}
+      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 7 }}>MAÇ SONUCU</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {pill("1", "1", locTeam(match.home, t))}
+        {pill("X", "X", "Beraberlik")}
+        {pill("2", "2", locTeam(match.away, t))}
+      </div>
+      {/* MOTM */}
+      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 7 }}>MAÇIN ADAMI <span style={{ color: COLORS.accent }}>+10</span></div>
+      <button onClick={function(){ setPickFor(pickFor === "motm" ? null : "motm"); setQ(""); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+        borderRadius: 12, border: "1px solid " + COLORS.border, background: COLORS.card, cursor: "pointer", fontFamily: FONT, marginBottom: pickFor === "motm" ? 8 : 14, WebkitTapHighlightColor: "transparent" }}>
+        {motm
+          ? <><PredHead photo={motm.photo} size={26} /><span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700 }}>{motm.name}</span></>
+          : <span style={{ color: COLORS.textMuted, fontSize: 13 }}>Maçın en iyi oyuncusunu seç…</span>}
+        <span style={{ marginLeft: "auto", color: COLORS.textMuted }}>▾</span>
+      </button>
+      {pickFor === "motm" && picker("motm", function(p){ setMotm(p); })}
+      {/* rating picks: 2 user-chosen (tap on the pitch) + 1 system suggestion */}
+      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 3 }}>OYUNCU REYTİNGLERİ <span style={{ color: COLORS.accent }}>+5</span></div>
+      <div style={{ color: COLORS.textMuted, fontSize: 11, fontWeight: 600, marginBottom: 9 }}>{cand && cand.lineups ? "Sahadan 2 oyuncu seç, 1'ini sistem önerir · maç sonu reytingini tahmin et" : "2 oyuncuyu sen seç, 1'ini sistem önerir · maç sonu reytingini tahmin et"}</div>
+      {cand && cand.lineups
+        ? (function(){
+            var side = cand.lineups[pside] || { starting: [] };
+            var clickMap = {}; (side.starting || []).forEach(function(pl){ clickMap[pl.id] = pl; });
+            var sideTeamId = pside === "home" ? match.homeId : match.awayId;
+            var badgeMap = {}, ringMap = {};
+            (ratings || []).forEach(function(r){ if (String(r.teamId) === String(sideTeamId)) badgeMap[r.id] = r.val; });
+            // the system's suggested player is ALWAYS ringed on its side (even if not rated)
+            if (sysPlayer && String(sysPlayer.teamId) === String(sideTeamId)) ringMap[sysPlayer.id] = true;
+            var sysRated = sysId != null ? existingRating(sysId) : null;
+            return <div style={{ marginBottom: 10 }}>
+              {/* system's suggested star, pinned above the pitch — stays even if you remove its rating */}
+              {sysPlayer && <div onClick={function(){ openRatingEditor(sysPlayer); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", marginBottom: 10,
+                borderRadius: 12, border: "2px solid " + COLORS.accent, background: COLORS.glassPurple, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                <PredHead photo={sysPlayer.photo} size={30} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sysPlayer.name}</span>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: COLORS.accent, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>
+                  </div>
+                  <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{locTeam(sysPlayer.team, t)}</div>
+                </div>
+                {sysRated
+                  ? <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 15, fontWeight: 800 }}>{sysRated.val.toFixed(1)}</span>
+                  : <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 12, fontWeight: 700 }}>Oy ver →</span>}
+              </div>}
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                {[{ id: "home", label: locTeam(match.home, t) }, { id: "away", label: locTeam(match.away, t) }].map(function(sd){
+                  var a = pside === sd.id;
+                  return <button key={sd.id} onClick={function(){ setPside(sd.id); }} style={{ flex: 1, minWidth: 0, padding: "7px 8px", borderRadius: 10, cursor: "pointer", fontFamily: FONT,
+                    border: "1px solid " + (a ? COLORS.accent + "66" : COLORS.border), background: a ? COLORS.accentDim : COLORS.card, color: a ? COLORS.accent : COLORS.textSecondary,
+                    fontSize: 12, fontWeight: a ? 800 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", WebkitTapHighlightColor: "transparent" }}>{sd.label}</button>; })}
+              </div>
+              <Pitch lineup={side} flip={true} label={pside === "home" ? locTeam(match.home, t) : locTeam(match.away, t)} color={null}
+                players={clickMap} ratings={badgeMap} highlight={ringMap} onPlayerClick={function(pl){ openRatingEditor(pl); }} />
+              <div style={{ color: COLORS.textMuted, fontSize: 11, textAlign: "center", marginTop: 6 }}>Reyting vermek için oyuncuya dokun</div>
+              {/* picks summary — appears once you've rated players (tap a row to edit) */}
+              {(ratings || []).length > 0 && <div style={{ marginTop: 12 }}>
+                {(ratings || []).map(function(r){
+                  return <div key={r.id} onClick={function(){ openRatingEditor(r); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 4px",
+                    borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                    <PredHead photo={r.photo} size={26} />
+                    <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                    {sysId != null && String(r.id) === String(sysId) && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>}
+                    <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 14, fontWeight: 800 }}>{r.val.toFixed(1)}</span>
+                    <button onClick={function(e){ e.stopPropagation(); removeRatingById(r.id); }} aria-label="kaldır" style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2 }}>×</button>
+                  </div>; })}
+              </div>}
+            </div>;
+          })()
+        : <>
+            {(ratings || []).map(function(r, i){
+              return <div key={r.id} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                  <PredHead photo={r.photo} size={24} />
+                  <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                  {r.system && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>}
+                  <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 14, fontWeight: 800 }}>{r.val.toFixed(1)}</span>
+                  <button onClick={function(){ removeRating(i); }} aria-label="kaldır" style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2 }}>×</button>
+                </div>
+                <RatingSlider value={r.val} onChange={function(v){ setRatings(function(prev){ return prev.map(function(x, xi){ return xi === i ? Object.assign({}, x, { val: v }) : x; }); }); }} />
+              </div>; })}
+            {ratings.length < 3 && (pickFor === "rating"
+              ? picker("rating", function(p){ addUserRating(p); })
+              : <button onClick={function(){ setPickFor("rating"); setQ(""); }} style={{ width: "100%", padding: "9px 12px", borderRadius: 12, border: "1px dashed " + COLORS.border,
+                  background: "transparent", color: COLORS.textSecondary, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 700, marginBottom: 14, WebkitTapHighlightColor: "transparent" }}>+ Oyuncu ekle</button>)}
+          </>}
+      <button onClick={save} disabled={saving} style={{ width: "100%", marginTop: 4, padding: "11px 16px", borderRadius: 12, border: "none",
+        background: saved ? COLORS.cardAlt : COLORS.accent, boxShadow: saved ? "none" : "none", color: saved ? COLORS.accent : "#fff",
+        fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+        {saved ? "✓ Kaydedildi" : (mine ? "Kuponu Güncelle" : "Kuponu Kaydet")}</button>
+    </div>
+    {ratingEdit && <PredRatingSheet player={ratingEdit} initial={editVal} existing={!!existingRating(ratingEdit.id)} t={t}
+      onSave={function(v){ applyRating(ratingEdit, v); }}
+      onRemove={function(){ removeRatingById(ratingEdit.id); }}
+      onClose={function(){ setRatingEdit(null); }} />}
+  </div>;
+}
+
+// small round player head with graceful fallback (prediction coupon)
+function PredHead({ photo, size }) {
+  var s = size || 26;
+  return photo
+    ? <img src={photo} alt="" style={{ width: s, height: s, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
+    : <span style={{ width: s, height: s, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "inline-block" }} />;
+}
+
+// read-only summary of a saved coupon (locked view)
+function CouponSummary({ picks, match, t }) {
+  if (!picks) return null;
+  var row = { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 };
+  var lab = { color: COLORS.textMuted, fontSize: 11, fontWeight: 700, width: 96, flexShrink: 0 };
+  var res = picks.onextwo === "1" ? locTeam(match.home, t) : picks.onextwo === "2" ? locTeam(match.away, t) : picks.onextwo === "X" ? "Beraberlik" : "—";
+  return <div>
+    <div style={row}><span style={lab}>Maç Sonucu</span><span style={{ color: COLORS.textPrimary, fontWeight: 700 }}>{res}</span></div>
+    {picks.motm && <div style={row}><span style={lab}>Maçın Adamı</span><span style={{ color: COLORS.textPrimary, fontWeight: 700 }}>{picks.motm.name}</span></div>}
+    {(picks.ratings || []).map(function(r, i){
+      return <div key={i} style={row}><span style={lab}>{i === 0 ? "Reytingler" : ""}</span>
+        <span style={{ color: COLORS.textPrimary, fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+        <span style={{ color: COLORS.accent, fontWeight: 800 }}>{Number(r.pred).toFixed(1)}</span></div>;
+    })}
+  </div>;
+}
+
+// Post-match consensus: how the user's player ratings compare to the community average.
+// "Sen 8.5 verdin, topluluk 6.2 — kim haklı?" — a cheap, identity-flavored re-open hook.
+function RatingConsensus({ match, t }) {
+  var fav = useFavorites();
+  var [rows, setRows] = useState(null);
+  useEffect(function(){
+    if (match.status !== "finished" || !match.id || !fav.loggedIn) { setRows([]); return; }
+    var cancelled = false;
+    Promise.all([fetchMyMatchRatings(match.id), fetchRatingConsensus(match.id)]).then(function(res){
+      if (cancelled) return;
+      var mine = res[0] || {}, comm = res[1] || {};
+      var list = Object.keys(mine).map(function(id){
+        var c = comm[id]; var avg = c ? c.avg : null;
+        return { id: id, name: mine[id].name || "?", yours: mine[id].rating, avg: avg, cnt: c ? c.cnt : 0, diff: avg != null ? Math.abs(mine[id].rating - avg) : 0 };
+      }).filter(function(x){ return x.avg != null; });
+      list.sort(function(a, b){ return b.diff - a.diff; });
+      setRows(list);
+    }).catch(function(){ if (!cancelled) setRows([]); });
+    return function(){ cancelled = true; };
+  }, [match.id, fav.loggedIn]);
+  if (!rows || rows.length === 0) return null;
+  var top = rows[0];
+  return <div style={{ marginBottom: 16 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+      <span style={{ color: COLORS.accent, display: "flex" }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20v-6M6 20v-4M18 20V8"/><circle cx="12" cy="6" r="2"/></svg>
+      </span>
+      <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>Rating Konsensüsü</span>
+    </div>
+    <div style={{ background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder, borderRadius: 16, padding: "14px 16px" }}>
+      <div style={{ color: COLORS.textPrimary, fontSize: 13.5, lineHeight: 1.55, marginBottom: 12 }}>
+        <b>{lastName(top.name)}</b>'e sen <b style={{ color: COLORS.accent }}>{top.yours.toFixed(1)}</b> verdin, topluluk <b>{top.avg.toFixed(1)}</b>. Kim haklı?
+      </div>
+      {rows.slice(0, 5).map(function(r){
+        var higher = r.yours >= r.avg;
+        return <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid " + COLORS.border }}>
+          <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+          <span style={{ color: COLORS.accent, fontSize: 13, fontWeight: 800, minWidth: 30, textAlign: "right" }}>{r.yours.toFixed(1)}</span>
+          <span style={{ color: COLORS.textMuted, fontSize: 11 }}>sen</span>
+          <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 700, minWidth: 30, textAlign: "right" }}>{r.avg.toFixed(1)}</span>
+          <span style={{ color: COLORS.textMuted, fontSize: 11 }}>topluluk</span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: higher ? "#2FAE55" : COLORS.red, minWidth: 34, textAlign: "right" }}>{higher ? "+" : "−"}{r.diff.toFixed(1)}</span>
+        </div>; })}
+    </div>
+  </div>;
+}
+
 function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments }) {
   // match.stats may be a thin snapshot (opened from the community feed) — default the array fields so nothing crashes.
   var s = Object.assign({ channels: [], homeSquad: [], awaySquad: [], homeForm: [], awayForm: [], h2h: [] }, match.stats || {});
-  var [tab, setTab] = useState("info");
+  var [tab, setTab] = useState((isF1 || match.status === "finished") ? "info" : "tahmin"); // upcoming/live football opens on the prediction tab
   useEffect(function(){ if (jumpComments) setTab("comments"); }, [jumpComments]);
   var [h2h, setH2h] = useState(s.h2h);
   var [h2hList, setH2hList] = useState([]);
@@ -1279,7 +1824,9 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
   var hasTimeline = detail && detail.timeline && detail.timeline.length > 0;
   var showSummary = !isF1 && (match.status === "finished" || match.status === "live");
 
-  var tabs = [{ id: "info", label: t.info }];
+  var tabs = [];
+  if (!isF1) tabs.push({ id: "tahmin", label: "Tahmin" });
+  tabs.push({ id: "info", label: t.info });
   if (showSummary) tabs.push({ id: "summary", label: t.summary });
   if (isF1 && s.homeSquad.length > 0) tabs.push({ id: "grid", label: t.grid });
   if (!isF1) tabs.push({ id: "squads", label: t.squads });
@@ -1295,33 +1842,14 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
       <UnderlineTabs indicatorColor={COLORS.accent} tabs={tabs} active={tab} onChange={setTab} />
     </div>
 
+    {tab === "tahmin" && !isF1 && <div>
+      <PredictionCoupon match={match} t={t} />
+      {match.status === "finished" && <RatingConsensus match={match} t={t} />}
+    </div>}
+
     {tab === "info" && <div>
       {!isF1 && <div>
         {stLoading && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "10px 0" }}>{t.loading}</div>}
-
-        {/* AI pre-match preview — only until the match ends */}
-        {match.status !== "finished" && <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span style={{ color: COLORS.accent, display: "flex" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /><path d="M19 14l.9 2.4L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.6z" /></svg>
-            </span>
-            <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>Maç Önü Analizi</span>
-            <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 7px", borderRadius: 6 }}>AI</span>
-          </div>
-          <div style={{ background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder, borderRadius: 16, padding: "14px 16px",
-            backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.14)" }}>
-            {aiText
-              ? <div style={{ color: COLORS.textPrimary, fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{aiText}</div>
-              : aiLoading
-                ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "4px 0" }}>Analiz hazırlanıyor…</div>
-                : <button onClick={loadPreview} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 16px",
-                    background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /></svg>
-                    Analizi Oluştur
-                  </button>}
-            {aiErr && <div style={{ color: COLORS.textMuted, fontSize: 12, marginTop: aiText ? 8 : 8 }}>{aiErr}</div>}
-          </div>
-        </div>}
 
         {myGroups.length > 0 && <CascadeItem index={0}><div style={{ marginBottom: 16 }}>
           <div style={{ color: COLORS.textSecondary, fontSize: 12, marginBottom: 10, fontWeight: 700 }}>{t.standing}</div>
@@ -1721,6 +2249,12 @@ function FeaturedCarousel({ matches, isF1, t, onOpen }) {
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{locTeam(m.away, t)}</span>
             </div>
           </div>}
+
+        {/* quick 1X2 prediction — predict straight from the carousel */}
+        {!isF1 && m.status === "upcoming" && <div style={{ marginTop: 22 }}>
+          <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 800, textAlign: "center", marginBottom: 8, letterSpacing: "0.6px" }}>TAHMİNİN</div>
+          <Quick1x2 match={m} layout="below" />
+        </div>}
 
         {/* dots */}
         {count > 1 && <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 26 }}>
@@ -2236,6 +2770,51 @@ function HaftaninTakimi({ season, t, onOpenPlayer }) {
 }
 
 // Rate the 3 standouts side by side (sliders). Bottom sheet, mock/local.
+// Player-detail bottom sheet for predicting a player's match rating (opens from the coupon pitch).
+function PredRatingSheet({ player, initial, existing, t, onSave, onRemove, onClose }) {
+  var [visible, setVisible] = useState(false);
+  var [val, setVal] = useState(initial != null ? initial : 3.0);
+  useEffect(function(){
+    var r = requestAnimationFrame(function(){ setVisible(true); });
+    function onKey(e){ if (e.key === "Escape") close(); }
+    window.addEventListener("keydown", onKey);
+    return function(){ cancelAnimationFrame(r); window.removeEventListener("keydown", onKey); };
+  }, []);
+  function close(){ setVisible(false); setTimeout(onClose, 280); }
+  function save(){ onSave(Math.round(val * 10) / 10); close(); }
+  function remove(){ if (onRemove) onRemove(); close(); }
+  if (typeof document === "undefined") return null;
+  // portal to body so position:fixed is relative to the viewport (the match modal uses transform)
+  return createPortal(<div onClick={close}
+    onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
+    style={{ position: "fixed", inset: 0, zIndex: 1300, display: "flex", alignItems: "flex-end", justifyContent: "center",
+    background: visible ? "rgba(12,14,18,0.55)" : "rgba(12,14,18,0)", transition: "background 0.3s ease" }}>
+    <div onClick={function(e){ e.stopPropagation(); }} style={{ width: "100%", maxWidth: 480, background: "var(--modalGrad)",
+      backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
+      borderTopLeftRadius: 24, borderTopRightRadius: 24, border: "1px solid var(--modalBorder)", borderBottom: "none",
+      padding: "12px 20px max(24px, env(safe-area-inset-bottom))", fontFamily: FONT, maxHeight: "90vh", overflowY: "auto",
+      transform: visible ? "translateY(0)" : "translateY(100%)", transition: "transform 0.34s cubic-bezier(0.22,1,0.36,1)", boxShadow: "0 -8px 40px rgba(20,40,40,0.22)" }}>
+      <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 16px" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6 }}>
+        <PredHead photo={player.photo} size={64} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ color: COLORS.textPrimary, fontSize: 19, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{player.name}</div>
+          <div style={{ color: COLORS.textSecondary, fontSize: 13 }}>{locTeam(player.team, t)}{player.position ? " · " + player.position : ""}</div>
+        </div>
+      </div>
+      <div style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 600, margin: "8px 0 16px" }}>Maç sonu alacağı reytingi tahmin et</div>
+      <div style={{ textAlign: "center", fontSize: 46, fontWeight: 800, color: COLORS.accent, marginBottom: 16, lineHeight: 1 }}>{val.toFixed(1)}</div>
+      <RatingSlider value={val} onChange={setVal} />
+      <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+        {existing && <button onClick={remove} style={{ padding: "12px 18px", borderRadius: 13, border: "1px solid " + COLORS.border,
+          background: "transparent", color: COLORS.textSecondary, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kaldır</button>}
+        <button onClick={save} style={{ marginLeft: "auto", flex: existing ? "0 0 auto" : 1, padding: "12px 22px", borderRadius: 13, border: "none",
+          background: COLORS.accent, boxShadow: "none", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kaydet</button>
+      </div>
+    </div>
+  </div>, document.body);
+}
+
 function StandoutsRating({ players, t, onClose }) {
   var [visible, setVisible] = useState(false);
   var [ratings, setRatings] = useState(function(){ return players.map(function(p){ return p.rating != null ? p.rating : 5; }); });
@@ -2449,10 +3028,10 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
 
   return <><div onClick={onOpen}
     onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
-    style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", borderRadius: 16, cursor: "pointer",
+    style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 12px", borderRadius: 16, cursor: "pointer",
       background: hover ? "rgba(106,69,230,0.10)" : "transparent",
       transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)", WebkitTapHighlightColor: "transparent" }}>
-    <div style={{ width: 64, flexShrink: 0 }}>
+    <div style={{ width: 56, flexShrink: 0 }}>
       {isLive ? <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.red, background: COLORS.red + "18",
         padding: "2px 7px", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 4 }}>
         <span style={{ width: 4, height: 4, borderRadius: "50%", background: COLORS.red, animation: "pulse 1.5s infinite", display: "inline-block" }} />
@@ -2474,7 +3053,8 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
           {showScore && <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>{match.score ? match.score.split(" - ")[1] : ""}</span>}
         </div>
       </div>}
-    <MatchCardActions match={match} isF1={isF1} t={t} />
+    <Quick1x2 match={match} layout="card" />
+    <PredCount match={match} />
   </div>
   {divider && <div style={{ height: 1, background: COLORS.border, margin: "0 14px" }} />}
   </>;
@@ -2571,6 +3151,58 @@ function useSheetDrag(onClose) {
 }
 
 // Full-screen modal popup (in-page overlay, not a route). Smooth open/close.
+// Small AI pre-match analysis button (header). Generates on tap; shows the analysis in a
+// popover — on hover (desktop) or tap (mobile). Self-contained so it can live in the header.
+function AiAnalysisButton({ match, detail, t }) {
+  var [text, setText] = useState(null);
+  var [loading, setLoading] = useState(false);
+  var [err, setErr] = useState(null);
+  var [open, setOpen] = useState(false);
+  useEffect(function(){
+    if (match.status === "finished" || !match.id) return;
+    var cancelled = false;
+    fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, peek: true }) })
+      .then(function(r){ return r.json(); }).then(function(j){ if (!cancelled && j && j.text) setText(j.text); }).catch(function(){});
+    return function(){ cancelled = true; };
+  }, [match.id]);
+
+  function generate(){
+    if (loading) return;
+    if (text) { setOpen(function(o){ return !o; }); return; } // already generated -> toggle popover
+    setLoading(true); setErr(null); setOpen(true);
+    var homeId = match.homeId, awayId = match.awayId;
+    var h2hP = (homeId && awayId) ? fetch("/api/football?mode=h2h&home=" + homeId + "&away=" + awayId).then(function(r){ return r.json(); }).then(function(j){ return j.h2h || null; }).catch(function(){ return null; }) : Promise.resolve(null);
+    var stP = match.leagueId ? fetch("/api/football?mode=standings&league=" + match.leagueId + "&season=" + (match.season || 2025)).then(function(r){ return r.json(); }).then(function(j){ return (j.standings && j.standings.groups) ? j.standings.groups : []; }).catch(function(){ return []; }) : Promise.resolve([]);
+    Promise.all([h2hP, stP]).then(function(res){
+      var hh = res[0], groups = res[1];
+      function rowFor(id){ for (var g = 0; g < groups.length; g++){ var rows = groups[g].rows || []; for (var i = 0; i < rows.length; i++){ var rw = rows[i]; if (String(rw.teamId) === String(id)) return { team: locTeam(rw.team, t), rank: i + 1, played: rw.played, win: rw.win, draw: rw.draw, lose: rw.lose, gd: rw.gd, points: rw.points }; } } return null; }
+      var standRows = [rowFor(homeId), rowFor(awayId)].filter(Boolean);
+      var season = (detail && detail.season && (detail.season.home || detail.season.away)) ? { home: detail.season.home, away: detail.season.away } : null;
+      var ctx = { matchId: match.id, status: match.status, home: locTeam(match.home, t), away: locTeam(match.away, t), league: match.league, date: match.date, standings: standRows, season: season, h2h: (hh && hh.total != null) ? hh : null };
+      return fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ctx) }).then(function(r){ return r.json(); });
+    }).then(function(j){ if (j && j.text) { setText(j.text); aiMarkSeen(match.id); } else setErr(j && j.error === "no_key" ? "AI ayarlı değil." : "Analiz oluşturulamadı."); })
+      .catch(function(){ setErr("Analiz oluşturulamadı."); }).finally(function(){ setLoading(false); });
+  }
+
+  if (match.status === "finished") return null; // pre-match analysis only
+  var showPop = open && (text || loading || err);
+  return <div style={{ position: "relative", display: "inline-block" }}
+    onMouseEnter={function(){ if (text) setOpen(true); }} onMouseLeave={function(){ if (text) setOpen(false); }}>
+    <button onClick={generate} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 13px", borderRadius: 999,
+      border: "1px solid " + COLORS.glassBorder, background: COLORS.glassPurple, cursor: "pointer", color: COLORS.accent, fontSize: 12, fontWeight: 700, fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" /></svg>
+      {loading ? "Analiz…" : "AI Analizi"}
+    </button>
+    {showPop && <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", marginTop: 8, zIndex: 40,
+      width: "min(340px, 86vw)", background: COLORS.card, border: "1px solid " + COLORS.glassBorder, borderRadius: 14, padding: "12px 14px",
+      boxShadow: "0 12px 36px rgba(20,40,40,0.30)", textAlign: "left" }}>
+      {loading ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "4px 0" }}>Analiz hazırlanıyor…</div>
+        : err ? <div style={{ color: COLORS.textMuted, fontSize: 12.5 }}>{err}</div>
+          : <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{text}</div>}
+    </div>}
+  </div>;
+}
+
 function MatchModal({ match, isF1, t, onClose }) {
   var [visible, setVisible] = useState(false);
   var [detail, setDetail] = useState(undefined); // undefined = not fetched yet
@@ -2649,7 +3281,8 @@ function MatchModal({ match, isF1, t, onClose }) {
         </div>
         {isF1 ? <div style={{ color: COLORS.textPrimary, fontSize: 20, fontWeight: 800 }}>{locTeam(match.home, t)}</div>
         : <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+              {match.homeId != null && <FavButton kind="team" refId={match.homeId} name={match.home} image={match.homeLogo} meta={{ leagueId: match.leagueId }} size={28} />}
               <TeamLogo src={match.homeLogo} name={locTeam(match.home, t)} size={42} />
               <span className="mo-team-name" style={{ color: COLORS.textPrimary, fontWeight: 800,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{locTeam(match.home, t)}</span></div>
@@ -2659,20 +3292,22 @@ function MatchModal({ match, isF1, t, onClose }) {
               {showScore ? <span style={{ color: CURRENT_THEME === "dark" ? "#fff" : COLORS.accent, fontSize: 22, fontWeight: 800 }}>{match.score}</span>
                : <span style={{ color: COLORS.textSecondary, fontSize: 15, fontWeight: 700 }}>{match.time}</span>}
               {match.penScore && <span style={{ color: COLORS.textSecondary, fontSize: 10, fontWeight: 700, marginTop: 1 }}>Pen. {match.penScore}</span>}</div>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, justifyContent: "flex-end", minWidth: 0 }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, justifyContent: "flex-end", minWidth: 0 }}>
               <span className="mo-team-name" style={{ color: COLORS.textPrimary, fontWeight: 800, textAlign: "right",
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{locTeam(match.away, t)}</span>
-              <TeamLogo src={match.awayLogo} name={locTeam(match.away, t)} size={42} /></div>
+              <TeamLogo src={match.awayLogo} name={locTeam(match.away, t)} size={42} />
+              {match.awayId != null && <FavButton kind="team" refId={match.awayId} name={match.away} image={match.awayLogo} meta={{ leagueId: match.leagueId }} size={28} />}</div>
           </div>}
 
-        {/* small "yorum yap" button right under the score / time */}
-        {!isF1 && <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+        {/* small "yorum yap" button + AI analysis button right under the score / time */}
+        {!isF1 && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 10 }}>
           <button onClick={function(){ setJumpComments(function(n){ return n + 1; }); }} style={{ display: "inline-flex", alignItems: "center", gap: 6,
             padding: "5px 13px", borderRadius: 999, border: "1px solid " + COLORS.border, background: COLORS.card, cursor: "pointer",
             color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="13" rx="3" /><path d="M8 17l-2 4v-4" /></svg>
             {t.commentDo}
           </button>
+          <AiAnalysisButton match={match} detail={detail} t={t} />
         </div>}
 
         {/* goal + red card summary under the score */}
@@ -3193,6 +3828,218 @@ function SimplePage({ title, onBack, t, children }) {
   </div>;
 }
 
+// Predictions hub: my coupons + reputation leaderboards (weekly / season / community leagues).
+function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
+  var [tab, setTab] = useState("coupons"); // "coupons" | "board"
+  var [mine, setMine] = useState(null);    // { items, points, played }
+  var [scope, setScope] = useState("weekly"); // "weekly" | "season" | <leagueId>
+  var [board, setBoard] = useState(null);
+  var [uid, setUid] = useState(null);
+  var [leagues, setLeagues] = useState([]);
+  var [newName, setNewName] = useState("");
+  var [joinCode, setJoinCode] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [msg, setMsg] = useState(null);
+
+  function loadLeagues(){ fetchMyPredLeagues().then(function(l){ setLeagues(l || []); }).catch(function(){}); }
+  useEffect(function(){
+    if (!loggedIn) return;
+    getUserId().then(setUid).catch(function(){});
+    // score any past-due unscored coupons first, then load mine
+    fetch("/api/predict/score").catch(function(){}).finally(function(){
+      fetchMyPredictions(60).then(function(r){ setMine(r || { items: [], points: 0, played: 0 }); }).catch(function(){ setMine({ items: [], points: 0, played: 0 }); });
+    });
+    loadLeagues();
+  }, [loggedIn]);
+
+  useEffect(function(){
+    if (tab !== "board") return;
+    setBoard(null);
+    var weekly = scope === "weekly";
+    var leagueId = (scope === "weekly" || scope === "season") ? null : scope;
+    fetchPredLeaderboard({ weekly: weekly, leagueId: leagueId, limit: 100 }).then(function(r){ setBoard(r || []); }).catch(function(){ setBoard([]); });
+  }, [tab, scope, loggedIn]);
+
+  function deleteCoupon(row){
+    deletePrediction(row.match_id).then(function(res){
+      if (res && res.error) return;
+      predInvalidate(row.match_id); // keep the feed's quick 1X2 in sync
+      setMine(function(prev){
+        if (!prev) return prev;
+        var items = prev.items.filter(function(x){ return x.id !== row.id; });
+        var points = 0, played = 0;
+        items.forEach(function(x){ if (x.scored) { points += x.points || 0; played += 1; } });
+        return { items: items, points: points, played: played };
+      });
+    });
+  }
+  function createLeague(){
+    var n = newName.trim(); if (n.length < 2 || busy) return;
+    setBusy(true); setMsg(null);
+    createPredLeague(n).then(function(res){
+      setBusy(false);
+      if (res && res.data) { setNewName(""); loadLeagues(); setScope(res.data.id); setTab("board"); setMsg("Lig oluşturuldu · kod: " + res.data.code); }
+      else setMsg("Oluşturulamadı.");
+    });
+  }
+  function joinLeague(){
+    var c = joinCode.trim(); if (c.length < 4 || busy) return;
+    setBusy(true); setMsg(null);
+    joinPredLeague(c).then(function(res){
+      setBusy(false);
+      if (res && res.data) { setJoinCode(""); loadLeagues(); setScope(res.data.id); setTab("board"); }
+      else setMsg(res && res.error === "not_found" ? "Bu kodla lig bulunamadı." : "Katılınamadı.");
+    });
+  }
+
+  if (!loggedIn) return <SimplePage title={t.navPredictions} onBack={onBack} t={t}>
+    <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>Tahmin yap, tuttukça itibar puanı kazan.
+      <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, boxShadow: "none", color: "#fff",
+        border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
+    </div>
+  </SimplePage>;
+
+  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 8px" };
+  function chip(id, text){
+    var on = scope === id;
+    return <button key={id} onClick={function(){ setScope(id); }} style={{ flexShrink: 0, padding: "7px 13px", borderRadius: 11, cursor: "pointer", fontFamily: FONT,
+      border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : COLORS.card, boxShadow: on ? "none" : "none",
+      color: on ? "#fff" : COLORS.textSecondary, fontSize: 12, fontWeight: on ? 800 : 600, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{text}</button>;
+  }
+
+  return <SimplePage title={t.navPredictions} onBack={onBack} t={t}>
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      {/* reputation banner */}
+      <div style={{ borderRadius: 18, padding: "16px 18px", background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder,
+        display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+        <div style={{ fontSize: 34, fontWeight: 800, color: COLORS.accent, lineHeight: 1 }}>{mine ? mine.points : 0}</div>
+        <div>
+          <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>İtibar Puanın</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 12 }}>{mine ? mine.played : 0} maç puanlandı</div>
+        </div>
+      </div>
+
+      <UnderlineTabs indicatorColor={COLORS.accent} active={tab} onChange={setTab}
+        tabs={[{ id: "coupons", label: "Kuponlarım" }, { id: "board", label: "Liderlik" }]} />
+
+      {tab === "coupons"
+        ? (mine === null
+            ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "36px 0" }}>{t.loading}</div>
+            : mine.items.length === 0
+              ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "36px 0" }}>Henüz kupon yapmadın. Bir maça girip tahmin yap!</div>
+              : <div>{mine.items.map(function(row){ return <CouponRow key={row.id} row={row} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(row.meta || { id: row.match_id }); }} onDelete={function(){ deleteCoupon(row); }} />; })}</div>)
+        : <div>
+            {/* scope chips: weekly / season / my leagues */}
+            <div className="mo-scroll" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 12 }}>
+              {chip("weekly", "Haftalık")}
+              {chip("season", "Sezon")}
+              {leagues.map(function(l){ return chip(l.id, l.name); })}
+            </div>
+            {board === null
+              ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>{t.loading}</div>
+              : board.length === 0
+                ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>Henüz puanlanan tahmin yok.</div>
+                : <div>{board.map(function(r, i){
+                    var me = uid && String(r.user_id) === String(uid);
+                    return <div key={r.user_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, marginBottom: 4,
+                      background: me ? COLORS.accentDim : "transparent" }}>
+                      <span style={{ width: 26, textAlign: "center", color: i < 3 ? COLORS.accent : COLORS.textMuted, fontSize: 14, fontWeight: 800 }}>{i + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 14, fontWeight: me ? 800 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.username}{me ? " (sen)" : ""}</span>
+                      <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{r.played} maç</span>
+                      <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, minWidth: 40, textAlign: "right" }}>{r.points}</span>
+                    </div>; })}</div>}
+
+            {/* community leagues: create + join */}
+            <div style={label}>Topluluk Ligi</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input value={newName} onChange={function(e){ setNewName(e.target.value); }} placeholder="Lig adı"
+                style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: 11, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
+              <button onClick={createLeague} disabled={busy} style={{ padding: "9px 14px", borderRadius: 11, border: "none", background: COLORS.accent, boxShadow: "none", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>Oluştur</button>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input value={joinCode} onChange={function(e){ setJoinCode(e.target.value.toUpperCase()); }} placeholder="Katılım kodu"
+                style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: 11, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT, letterSpacing: "1px" }} />
+              <button onClick={joinLeague} disabled={busy} style={{ padding: "9px 14px", borderRadius: 11, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.textPrimary, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>Katıl</button>
+            </div>
+            {msg && <div style={{ color: COLORS.textSecondary, fontSize: 12, marginTop: 8 }}>{msg}</div>}
+          </div>}
+    </div>
+  </SimplePage>;
+}
+
+// One saved coupon row in the predictions hub.
+function CouponRow({ row, t, onOpen, onDelete }) {
+  var m = row.meta || {};
+  var picks = row.picks || {};
+  // cancellable only before kickoff (once the match starts the coupon is locked into your reputation)
+  var canDelete = row.match_ts ? new Date(row.match_ts).getTime() > Date.now() : !row.scored;
+  var res = picks.onextwo === "1" ? "MS 1" : picks.onextwo === "2" ? "MS 2" : picks.onextwo === "X" ? "MS X" : null;
+  var bits = [];
+  if (res) bits.push(res);
+  if (picks.motm) bits.push("MA: " + (picks.motm.name || "").split(" ").slice(-1)[0]);
+  if (picks.ratings && picks.ratings.length) bits.push(picks.ratings.length + " reyting");
+  return <div onClick={onOpen} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 8px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <TeamLogo src={m.homeLogo} name={m.home} size={18} />
+        <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{locTeam(m.home, t)}</span>
+        <span style={{ color: COLORS.textMuted, fontSize: 12 }}>-</span>
+        <TeamLogo src={m.awayLogo} name={m.away} size={18} />
+        <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{locTeam(m.away, t)}</span>
+      </div>
+      <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bits.join(" · ")}</div>
+    </div>
+    {row.scored
+      ? <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>+{row.points || 0}</span>
+      : <span style={{ color: COLORS.textMuted, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>bekliyor</span>}
+    {canDelete && onDelete && <button onClick={function(e){ e.stopPropagation(); onDelete(); }} aria-label="sil" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9,
+      border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></svg>
+    </button>}
+  </div>;
+}
+
+// Football DNA: a small identity fingerprint from the user's ratings + predictions.
+// Axes are derived from data we already store (no player-attribute metadata needed yet).
+function FootballDNA({ t }) {
+  var [prof, setProf] = useState(null);
+  var [preds, setPreds] = useState(null);
+  useEffect(function(){
+    var cancelled = false;
+    fetchUserRatingProfile().then(function(p){ if (!cancelled) setProf(p || { n: 0 }); }).catch(function(){ if (!cancelled) setProf({ n: 0 }); });
+    fetchMyPredictions(200).then(function(r){ if (!cancelled) setPreds(r || { items: [] }); }).catch(function(){ if (!cancelled) setPreds({ items: [] }); });
+    return function(){ cancelled = true; };
+  }, []);
+  if (!prof || !preds) return <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.loading}</div>;
+  var scored = (preds.items || []).filter(function(x){ return x.scored; });
+  var n = prof.n || 0;
+  if (n < 3 && scored.length < 1) {
+    return <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, lineHeight: 1.5 }}>
+      DNA'n oluşuyor — birkaç oyuncuya puan ver ve tahmin yap, futbol kimliğin şekillensin.</div>;
+  }
+  function clamp(v){ return Math.max(3, Math.min(100, Math.round(v))); }
+  var avgPts = scored.length ? scored.reduce(function(s, x){ return s + (x.points || 0); }, 0) / scored.length : 0;
+  var axes = [
+    { key: "Aktiflik", val: clamp(n * 3), hint: n + " puanlama" },
+    { key: "Cömertlik", val: prof.avg_diff != null ? clamp(50 + prof.avg_diff * 30) : 50, hint: prof.avg_diff != null ? (prof.avg_diff >= 0 ? "+" : "") + prof.avg_diff.toFixed(1) + " vs topluluk" : "—" },
+    { key: "Uyum", val: prof.avg_absdiff != null ? clamp(100 - prof.avg_absdiff * 45) : 50, hint: "toplulukla örtüşme" },
+    { key: "İsabet", val: scored.length ? clamp(avgPts / 28 * 100) : 3, hint: scored.length ? "maç başı " + avgPts.toFixed(0) + " puan" : "tahmin yok" },
+  ];
+  return <div style={{ background: COLORS.card, borderRadius: 18, padding: "16px 16px 8px" }}>
+    {axes.map(function(a, i){
+      return <div key={i} style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700 }}>{a.key}</span>
+          <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{a.hint}</span>
+        </div>
+        <div style={{ height: 8, borderRadius: 6, background: COLORS.cardAlt, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: a.val + "%", borderRadius: 6, background: COLORS.accent, transition: "width 0.5s cubic-bezier(0.22,1,0.36,1)" }} />
+        </div>
+      </div>;
+    })}
+  </div>;
+}
+
 function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
   useFavorites();
   var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
@@ -3262,8 +4109,9 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
 
       {/* hero: soft gradient glow + avatar */}
       <div style={{ position: "relative", overflow: "hidden", padding: "26px 20px 22px" }}>
-        <span aria-hidden style={{ position: "absolute", left: -40, right: -40, top: -56, height: 150, pointerEvents: "none", opacity: 0.5,
-          filter: "blur(42px)", WebkitFilter: "blur(42px)", background: "linear-gradient(120deg, " + COLORS.accent + ", " + COLORS.teal + " 72%, transparent)" }} />
+        <span aria-hidden style={{ position: "absolute", left: 0, right: 0, top: -56, height: 240, pointerEvents: "none", opacity: 0.5,
+          filter: "blur(46px)", WebkitFilter: "blur(46px)", background: "linear-gradient(120deg, " + COLORS.accent + ", " + COLORS.teal + " 72%, transparent)",
+          maskImage: "linear-gradient(180deg, #000 12%, transparent 68%)", WebkitMaskImage: "linear-gradient(180deg, #000 12%, transparent 68%)" }} />
         <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ width: 72, height: 72, borderRadius: 24, flexShrink: 0,
             background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
@@ -3276,7 +4124,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
                     onKeyDown={function(e){ if (e.key === "Enter") saveName(); }}
                     style={{ flex: 1, minWidth: 0, padding: "7px 12px", background: COLORS.card, border: "1px solid " + COLORS.border,
                       borderRadius: 12, color: COLORS.textPrimary, fontSize: 16, fontWeight: 700, outline: "none", fontFamily: FONT }} />
-                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff",
+                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accent, boxShadow: "none", color: "#fff",
                     border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.save}</button>
                 </div>
               : <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -3301,6 +4149,9 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.val}</div>
             <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.label}</div></div>; })}
         </div>
+
+        {/* Football DNA — your rating/prediction fingerprint */}
+        <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Football DNA</div><FootballDNA t={t} /></div>
 
         {/* favorites */}
         {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
@@ -3416,8 +4267,8 @@ function LoginScreen({ t, lang, setLang, theme, onClose }) {
       {error && <div style={{ color: COLORS.red, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{error}</div>}
       {info && <div style={{ color: COLORS.accent, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{info}</div>}
 
-      <button onClick={go} disabled={loading} style={{ width: "100%", padding: 14, background: loading ? COLORS.textMuted : COLORS.accentGrad,
-        boxShadow: loading ? "none" : COLORS.accentGlow,
+      <button onClick={go} disabled={loading} style={{ width: "100%", padding: 14, background: loading ? COLORS.textMuted : COLORS.accent,
+        boxShadow: loading ? "none" : "none",
         border: "none", borderRadius: 16, color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: FONT }}>
         {loading ? t.loggingIn : (mode === "signup" ? t.signup : t.login)}</button>
 
@@ -3438,7 +4289,7 @@ function LoginScreen({ t, lang, setLang, theme, onClose }) {
 }
 
 // Slide-in hamburger drawer: dark/light toggle, language, and links to settings / news.
-function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, onNews }) {
+function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, onNews, onFavorites }) {
   var [show, setShow] = useState(false);
   useEffect(function(){
     var r = requestAnimationFrame(function(){ setShow(true); });
@@ -3474,6 +4325,12 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
       <div style={label}>{t.language}</div>
       <LangSwitch lang={lang} setLang={setLang} />
       <div style={{ height: 18 }} />
+      {onFavorites && <button onClick={function(){ close(); setTimeout(onFavorites, 300); }} style={Object.assign({ width: "100%", border: "none", cursor: "pointer", fontFamily: FONT, marginBottom: 10 }, card)}>
+        <span style={{ display: "flex", alignItems: "center", gap: 9, color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>
+          {t.favorites}</span>
+        <span style={{ color: COLORS.textMuted, fontSize: 18 }}>›</span>
+      </button>}
       <button onClick={function(){ close(); setTimeout(onSettings, 300); }} style={Object.assign({ width: "100%", border: "none", cursor: "pointer", fontFamily: FONT }, card)}>
         <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>{t.settings}</span>
         <span style={{ color: COLORS.textMuted, fontSize: 18 }}>›</span>
@@ -3508,7 +4365,7 @@ function MobileBottomNav({ active, onSelect, t }) {
   t = t || I18N.tr;
   var ref = useRef(null);
   var [ind, setInd] = useState({ left: 0, width: 0 });
-  var items = [["mac", t.navMatch], ["arama", t.navSearch], ["topluluk", t.navCommunity], ["favoriler", t.navFavorites], ["profil", t.navProfile]];
+  var items = [["mac", t.navMatch], ["arama", t.navSearch], ["topluluk", t.navCommunity], ["tahminler", t.navPredictions], ["profil", t.navProfile]];
   useEffect(function(){
     function measure(){
       var el = ref.current; if (!el) return;
@@ -3526,7 +4383,7 @@ function MobileBottomNav({ active, onSelect, t }) {
     if (id === "mac") return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>;
     if (id === "arama") return <svg {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>;
     if (id === "topluluk") return <svg {...p}><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5" /><path d="M16.5 5.6a3 3 0 0 1 0 5.6M18.5 20c0-2-.7-3.6-2-4.6" /></svg>;
-    if (id === "favoriler") return <svg {...p}><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>;
+    if (id === "tahminler") return <svg {...p}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>;
     return <svg {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>;
   }
   return <><style>{".mo-bottomnav{display:flex}@media(min-width:900px){.mo-bottomnav{display:none}}"}</style>
@@ -3689,7 +4546,7 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer,
       {!loggedIn
         ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>
             {t.favLoginPrompt}
-            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, color: "#fff",
+            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, boxShadow: "none", color: "#fff",
               border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
           </div>
         : recs.length === 0
@@ -3847,6 +4704,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   var [comingSoon, setComingSoon] = useState(null);      // placeholder page (unused now)
   var [showCommunity, setShowCommunity] = useState(false); // community / forum feed
   var [showFavorites, setShowFavorites] = useState(false); // favorites (teams & players)
+  var [showPredictions, setShowPredictions] = useState(false); // predictions hub (coupons + leaderboards)
   var [theme, setTheme] = useState("dark"); // default dark; overridden by saved pref on mount
 
   // load saved theme (or system preference) once, then apply on change
@@ -3895,16 +4753,16 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     setShowProfile(false); setShowSettings(false); setShowNews(false);
     setQuery(""); setSelectedLeague(null);
     setSelectedMatch(null); setSelectedPlayer(null); setSelectedTeam(null);
-    setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false);
+    setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false); setShowPredictions(false);
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {}
   }
   // mobile bottom-nav actions
   function onMobileNav(id) {
     if (id === "mac") { goHome(); }
-    else if (id === "arama") { setComingSoon(null); setShowProfile(false); setShowCommunity(false); setShowFavorites(false); setMobileSearch(true); }
-    else if (id === "topluluk") { setMobileSearch(false); setShowProfile(false); setComingSoon(null); setShowFavorites(false); setShowCommunity(true); }
-    else if (id === "favoriler") { setMobileSearch(false); setShowProfile(false); setShowCommunity(false); setComingSoon(null); setShowFavorites(true); }
-    else if (id === "profil") { setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false); if (loggedIn) setShowProfile(true); else setShowLogin(true); }
+    else if (id === "arama") { setComingSoon(null); setShowProfile(false); setShowCommunity(false); setShowFavorites(false); setShowPredictions(false); setMobileSearch(true); }
+    else if (id === "topluluk") { setMobileSearch(false); setShowProfile(false); setComingSoon(null); setShowFavorites(false); setShowPredictions(false); setShowCommunity(true); }
+    else if (id === "tahminler") { setMobileSearch(false); setShowProfile(false); setShowCommunity(false); setComingSoon(null); setShowFavorites(false); setShowPredictions(true); }
+    else if (id === "profil") { setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false); setShowPredictions(false); if (loggedIn) setShowProfile(true); else setShowLogin(true); }
   }
 
   function changeSport(id, el) {
@@ -4092,8 +4950,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     return function(){ clearInterval(id); };
   }, [loggedIn, activeSport]);
 
-  if (!authReady) return <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex",
-    alignItems: "center", justifyContent: "center", color: COLORS.textSecondary, fontFamily: FONT, fontSize: 14 }}>{t.loading}</div>;
+  if (!authReady) return <Splash fade={false} />;
   if (showLogin && !loggedIn) return <LoginScreen onClose={function(){ setShowLogin(false); }} t={t} lang={lang} setLang={setLang} theme={theme} />;
   if (showProfile) return <><AppStyles /><ProfilePage onBack={function(){ setShowProfile(false); }} onLogout={logout} session={session} t={t} lang={lang} setLang={setLang}
       onOpenTeam={function(r){ setSelectedTeam({ id: r.ref_id, name: r.name, logo: r.image }); }}
@@ -4154,11 +5011,19 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     {selectedPlayer && <PlayerModal player={selectedPlayer} t={t} onClose={function(){ setSelectedPlayer(null); }} />}
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
 
+  if (showPredictions) return <><AppStyles />
+    <PredictionsPage onBack={function(){ setShowPredictions(false); }} t={t} loggedIn={loggedIn}
+      onLogin={function(){ setShowLogin(true); }}
+      onOpenMatch={function(m){ setSelectedMatch(freshMatch(m && m.id) || m); }} />
+    <MobileBottomNav active="tahminler" onSelect={onMobileNav} t={t} />
+    {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
+
   var matches = data[activeSport] || [];
   // light mode: paint the top navbar in the brand purple with white content (.mo-navlight)
   var headerPurple = theme === "light";
   return <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
     <AppStyles />
+    <Splash fade={true} />
 
     <div className="mo-shell" style={{ flex: "1 0 auto" }}>
       <div className="mo-sticky" style={{ zIndex: 10, background: headerPurple ? COLORS.accentGrad : COLORS.card,
@@ -4198,13 +5063,13 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                   {t.community}
                 </button>
               </span>
-              {/* favorites (desktop only — mobile uses the bottom-nav "Favoriler") */}
+              {/* predictions (desktop only — mobile uses the bottom-nav "Tahminler") */}
               <span className="mo-only-desktop">
-                <button onClick={function(){ setShowFavorites(true); }} aria-label={t.favorites} style={{ display: "flex", alignItems: "center", gap: 7,
+                <button onClick={function(){ setShowPredictions(true); }} aria-label={t.navPredictions} style={{ display: "flex", alignItems: "center", gap: 7,
                   height: 38, padding: "0 13px", borderRadius: 12, background: COLORS.cardAlt, border: "none", cursor: "pointer", color: COLORS.textPrimary,
                   fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
-                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>
-                  {t.favorites}
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
+                  {t.navPredictions}
                 </button>
               </span>
               {/* news (label shown on desktop only) */}
@@ -4224,12 +5089,14 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                     </button>
                   : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 12,
-                      background: COLORS.accentGrad, boxShadow: COLORS.accentGlow, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
+                      background: COLORS.accent, boxShadow: "none", border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
                       fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                       {t.signInBtn}
                     </button>}
               </span>
+              {/* notifications bell (scored coupons) */}
+              <NotificationsBell loggedIn={loggedIn} matches={data.football || []} onOpenMatch={function(m){ setSelectedMatch(freshMatch(m && m.id) || m); }} />
               {/* hamburger — far right (settings, language, theme) */}
               <button onClick={function(){ setShowMenu(true); }} aria-label={t.menu} style={{ width: 38, height: 38, borderRadius: 12,
                 background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",
@@ -4358,7 +5225,8 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t}
       onClose={function(){ setSelectedMatch(null); }} />}
     {showMenu && <MenuDrawer onClose={function(){ setShowMenu(false); }} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} t={t}
-      onSettings={function(){ setShowSettings(true); }} onNews={function(){ setShowNews(true); }} />}
+      onSettings={function(){ setShowSettings(true); }} onNews={function(){ setShowNews(true); }}
+      onFavorites={function(){ setShowFavorites(true); }} />}
     <MobileBottomNav active={(mobileSearch || query) ? "arama" : "mac"} onSelect={onMobileNav} t={t} />
   </div>;
 }

@@ -752,6 +752,67 @@ export async function GET(request) {
     return Response.json({ round: round, league: league, formation: "4-3-3", players: xi });
   }
 
+  // ── Prediction candidates: probable XIs (with pitch grid) for a match's coupon ──
+  if (mode === "predcandidates") {
+    const fixture = searchParams.get("fixture");
+    const home = searchParams.get("home");
+    const away = searchParams.get("away");
+    const sides = { home: { formation: null, teamId: home, starting: [] }, away: { formation: null, teamId: away, starting: [] } };
+    function takeLineup(entry) {
+      const tid = entry.team && entry.team.id;
+      const side = String(tid) === String(home) ? "home" : (String(tid) === String(away) ? "away" : null);
+      if (!side || sides[side].starting.length) return; // keep the first XI we find per side
+      const tname = entry.team && entry.team.name;
+      const arr = (entry.startXI || []).map(function (x) {
+        const p = x.player || {};
+        return { id: p.id, name: p.name || "?", position: p.pos || null, shirt: (p.number != null ? p.number : null),
+          grid: p.grid || null, teamId: tid, team: tname || "",
+          photo: p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null };
+      });
+      if (arr.length) { sides[side].formation = entry.formation || null; sides[side].starting = arr; }
+    }
+    // 1) announced starting XI
+    if (fixture) { const lu = await apiGet("/fixtures/lineups?fixture=" + fixture, 600); (lu || []).forEach(takeLineup); }
+    // 2) probable XI: each team's most recent starting XI (works a day+ ahead)
+    for (const side of ["home", "away"]) {
+      if (sides[side].starting.length) continue;
+      const tId = side === "home" ? home : away;
+      if (!tId) continue;
+      const last = await apiGet("/fixtures?team=" + tId + "&last=1", 86400);
+      const fxId = last && last[0] && last[0].fixture && last[0].fixture.id;
+      if (!fxId) continue;
+      const lu2 = await apiGet("/fixtures/lineups?fixture=" + fxId, 86400);
+      (lu2 || []).forEach(function (entry) { if (entry.team && String(entry.team.id) === String(tId)) takeLineup(entry); });
+    }
+    let players = [].concat(sides.home.starting, sides.away.starting);
+    const haveLineups = !!(sides.home.starting.length || sides.away.starting.length);
+    // 3) last resort for the flat pool (no XI anywhere): full squads -> search list, no pitch
+    if (players.length < 6) {
+      for (const tId of [home, away]) {
+        if (!tId) continue;
+        const sq = await apiGet("/players/squads?team=" + tId, 604800);
+        const grp = (sq && sq[0]) || null;
+        const tname = grp && grp.team && grp.team.name;
+        const tid = grp && grp.team && grp.team.id;
+        ((grp && grp.players) || []).forEach(function (p) {
+          players.push({ id: p.id, name: p.name || "?", position: p.position || null, teamId: tid, team: tname || "",
+            photo: p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null });
+        });
+      }
+    }
+    const seen = {}, uniq = [];
+    players.forEach(function (p) { if (p.id != null && !seen[p.id]) { seen[p.id] = 1; uniq.push(p); } });
+    // system's 1 star suggestion: attacker first
+    function rank(p) { const s = (p.position || "").toLowerCase(); if (s === "f" || s.indexOf("att") >= 0) return 0; if (s === "m" || s.indexOf("mid") >= 0) return 1; if (s === "d" || s.indexOf("def") >= 0) return 2; return 3; }
+    // system's star suggestion: an attacking player (attacker/mid), varied per match (not always the
+    // first one) via a stable hash of the fixture — so it changes match-to-match but stays consistent.
+    function hashStr(s) { s = String(s || ""); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
+    const noted = uniq.filter(function (p) { return rank(p) <= 1; }); // attackers + midfielders
+    const pool = noted.length ? noted : uniq;
+    const rating = pool.length ? [pool[hashStr(fixture || (home + "-" + away)) % pool.length]] : [];
+    return Response.json({ players: uniq, rating: rating, lineups: haveLineups ? sides : null });
+  }
+
   // ── League tree per sport (flashscore-style country -> leagues) ──
   if (mode === "leagues") {
     const sport = searchParams.get("sport") || "football";
