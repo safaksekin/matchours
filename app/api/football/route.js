@@ -752,6 +752,33 @@ export async function GET(request) {
     return Response.json({ round: round, league: league, formation: "4-3-3", players: xi });
   }
 
+  // ── Match actuals for scoring/comparison: 90' result, actual MOTM, actual player ratings ──
+  if (mode === "matchactual") {
+    const fixture = searchParams.get("fixture");
+    if (!fixture) return Response.json({ ready: false });
+    const fx = await apiGet("/fixtures?id=" + fixture, 600);
+    const item = fx && fx[0];
+    if (!item) return Response.json({ ready: false });
+    const ft = (item.score && item.score.fulltime) || item.goals || {};
+    let onextwo = null;
+    if (ft.home != null && ft.away != null) onextwo = ft.home > ft.away ? "1" : (ft.home < ft.away ? "2" : "X");
+    const pdata = await apiGet("/fixtures/players?fixture=" + fixture, 3600);
+    const ratings = {}; let motmId = null, motmName = null, motmR = -1;
+    (pdata || []).forEach(function (entry) {
+      (entry.players || []).forEach(function (pp) {
+        const p = pp.player || {};
+        const g = ((pp.statistics && pp.statistics[0]) || {}).games || {};
+        if (g.rating == null) return;
+        const rv = parseFloat(g.rating);
+        if (isNaN(rv)) return;
+        ratings[String(p.id)] = Math.round(rv * 10) / 10;
+        if (rv > motmR) { motmR = rv; motmId = p.id; motmName = p.name; }
+      });
+    });
+    return Response.json({ ready: Object.keys(ratings).length > 0, onextwo: onextwo,
+      motm: motmId ? { id: motmId, name: motmName } : null, ratings: ratings });
+  }
+
   // ── Prediction candidates: probable XIs (with pitch grid) for a match's coupon ──
   if (mode === "predcandidates") {
     const fixture = searchParams.get("fixture");

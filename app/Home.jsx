@@ -242,11 +242,13 @@ function Splash({ fade }) {
 
 // Notifications bell (header): shows your scored coupons + points earned. In-app for now;
 // real push (browser/OS) is a later phase (needs a service worker + web-push).
-function NotificationsBell({ loggedIn, onOpenMatch, matches }) {
+function NotificationsBell({ loggedIn, onOpenMatch, matches, t }) {
   useFavorites(); // re-render when favorites change
   var [coupons, setCoupons] = useState([]);
   var [open, setOpen] = useState(false);
   var [, force] = useState(0);
+  var btnRef = useRef(null);
+  var [pos, setPos] = useState({ top: 58, right: 12 });
   useEffect(function () {
     if (!loggedIn) { setCoupons([]); return; }
     var cancelled = false;
@@ -256,43 +258,60 @@ function NotificationsBell({ loggedIn, onOpenMatch, matches }) {
     return function () { cancelled = true; };
   }, [loggedIn]);
   if (!loggedIn) return null;
-  // merge: your scored coupons + finished results of your favourite teams
-  var couponNotifs = coupons.map(function (x) { var m = x.meta || {}; return { id: "cp:" + x.id, kind: "coupon", home: m.home, away: m.away, points: x.points || 0, openM: m.id ? m : { id: x.match_id }, ts: m.ts || 0 }; });
+  // merge: your scored coupons + finished results of your favourite teams (no duplicate per match)
+  var couponMatchIds = {};
+  var couponNotifs = coupons.map(function (x) { var m = x.meta || {}; couponMatchIds[String(x.match_id)] = 1; return { id: "cp:" + x.id, kind: "coupon", home: m.home, away: m.away, points: x.points || 0, openM: m.id ? m : { id: x.match_id }, ts: m.ts || 0 }; });
   var resultNotifs = (matches || []).filter(function (m) {
-    return m.status === "finished" && m.homeId != null && (favHas("team", m.homeId) || favHas("team", m.awayId));
+    return m.status === "finished" && m.homeId != null && !couponMatchIds[String(m.id)] && (favHas("team", m.homeId) || favHas("team", m.awayId));
   }).map(function (m) { return { id: "rs:" + m.id, kind: "result", home: m.home, away: m.away, score: m.score, openM: m, ts: m.ts || 0 }; });
   var notifs = couponNotifs.concat(resultNotifs).sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); }).slice(0, 30);
   var unread = notifs.filter(function (x) { return !notifSeen(x.id); }).length;
   function toggle() {
-    var willOpen = !open; setOpen(willOpen);
+    var willOpen = !open;
+    if (willOpen && btnRef.current) {
+      var r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    }
+    setOpen(willOpen);
     if (willOpen && notifs.length) { notifMarkSeen(notifs.map(function (x) { return x.id; })); force(function (n) { return n + 1; }); }
   }
+  // dropdown is portalled to <body> so it escapes the light-mode navbar's white-text (.mo-navlight) styles
+  var dropdown = <>
+    <div onClick={function () { setOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 1200 }} />
+    <div style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 1201, width: "min(340px, 92vw)", background: COLORS.card, fontFamily: FONT,
+      border: "1px solid " + COLORS.border, borderRadius: 14, boxShadow: "0 12px 36px rgba(20,40,40,0.30)", overflow: "hidden", maxHeight: "75vh", overflowY: "auto" }}>
+      <div style={{ padding: "12px 14px", borderBottom: "1px solid " + COLORS.border, color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>Bildirimler</div>
+        {notifs.length === 0
+          ? <div style={{ padding: "22px 14px", color: COLORS.textMuted, fontSize: 13, textAlign: "center" }}>Henüz bildirim yok. Kuponların puanlanınca ve favori takımların oynayınca burada görünür.</div>
+          : notifs.map(function (x) {
+            var isCoupon = x.kind === "coupon";
+            var mn = (x.home && x.away) ? (locTeam(x.home, t) + " - " + locTeam(x.away, t)) : "Maç";
+            return <div key={x.id} onClick={function () { setOpen(false); if (onOpenMatch) onOpenMatch(x.openM); }}
+              style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 14px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                {isCoupon
+                  ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3" /></svg>
+                  : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>}
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{mn}</div>
+                <div style={{ color: COLORS.textSecondary, fontSize: 11.5, marginTop: 1 }}>
+                  {isCoupon
+                    ? <span>maçındaki tahminlerinden <b style={{ color: COLORS.accent }}>+{x.points} puan</b> kazandın</span>
+                    : <span>maçı sonuçlandı{x.score ? " · " + x.score : ""}</span>}
+                </div>
+              </div>
+            </div>; })}
+    </div>
+  </>;
   return <div style={{ position: "relative" }}>
-    <button onClick={toggle} aria-label="bildirimler" style={{ width: 38, height: 38, borderRadius: 12, background: COLORS.cardAlt, border: "none",
+    <button ref={btnRef} onClick={toggle} aria-label="bildirimler" style={{ width: 38, height: 38, borderRadius: 12, background: COLORS.cardAlt, border: "none",
       cursor: "pointer", color: COLORS.textPrimary, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", WebkitTapHighlightColor: "transparent" }}>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
       {unread > 0 && <span style={{ position: "absolute", top: 5, right: 5, minWidth: 15, height: 15, borderRadius: 8, background: COLORS.red, color: "#fff",
         fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{unread > 9 ? "9+" : unread}</span>}
     </button>
-    {open && <>
-      <div onClick={function () { setOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
-      <div style={{ position: "absolute", top: "112%", right: 0, zIndex: 61, width: "min(320px, 86vw)", background: COLORS.card,
-        border: "1px solid " + COLORS.border, borderRadius: 14, boxShadow: "0 12px 36px rgba(20,40,40,0.30)", overflow: "hidden", maxHeight: "70vh", overflowY: "auto" }}>
-        <div style={{ padding: "12px 14px", borderBottom: "1px solid " + COLORS.border, color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>Bildirimler</div>
-        {notifs.length === 0
-          ? <div style={{ padding: "22px 14px", color: COLORS.textMuted, fontSize: 13, textAlign: "center" }}>Henüz bildirim yok. Kuponların puanlanınca ve favori takımların oynayınca burada görünür.</div>
-          : notifs.map(function (x) {
-            var isCoupon = x.kind === "coupon";
-            return <div key={x.id} onClick={function () { setOpen(false); if (onOpenMatch) onOpenMatch(x.openM); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-              <span style={{ width: 40, height: 34, borderRadius: 10, background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: isCoupon ? 12 : 13, flexShrink: 0 }}>{isCoupon ? "+" + x.points : (x.score || "•")}</span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{(x.home || "") + " - " + (x.away || "")}</div>
-                <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{isCoupon ? "Kuponun puanlandı · +" + x.points + " itibar" : "Favori takımın oynadı · maç sonu"}</div>
-              </div>
-            </div>; })}
-      </div>
-    </>}
+    {open && typeof document !== "undefined" && createPortal(dropdown, document.body)}
   </div>;
 }
 
@@ -1356,13 +1375,14 @@ function PredictionCoupon({ match, t }) {
     }
   }, [mine]);
 
-  // finished match with an unscored coupon -> score it now, then show the points
+  // finished match with an unscored (or not-yet-rated) coupon -> score it now, then show the points
   useEffect(function(){
-    if (!locked || !mine || mine.scored || match.status !== "finished" || !match.id) return;
+    if (!locked || !mine || match.status !== "finished" || !match.id) return;
+    if (mine.scored && mine.rated) return; // already fully scored
     fetch("/api/predict/score?match=" + match.id)
       .then(function(){ return fetchMyPrediction(match.id); })
       .then(function(row){ if (row) setMine(row); }).catch(function(){});
-  }, [locked, match.id, mine && mine.scored]);
+  }, [locked, match.id, mine && mine.scored, mine && mine.rated]);
 
   useEffect(function(){
     if (locked || !fav.loggedIn || !match.id || cand) return;
@@ -1599,18 +1619,77 @@ function PredHead({ photo, size }) {
 
 // read-only summary of a saved coupon (locked view)
 function CouponSummary({ picks, match, t }) {
+  var [actual, setActual] = useState(null);
+  useEffect(function(){
+    if (match.status !== "finished" || !match.id) return;
+    var cancelled = false;
+    fetch("/api/football?mode=matchactual&fixture=" + match.id).then(function(r){ return r.json(); })
+      .then(function(j){ if (!cancelled && j && j.ready) setActual(j); }).catch(function(){});
+    return function(){ cancelled = true; };
+  }, [match.id, match.status]);
   if (!picks) return null;
-  var row = { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 };
-  var lab = { color: COLORS.textMuted, fontSize: 11, fontWeight: 700, width: 96, flexShrink: 0 };
-  var res = picks.onextwo === "1" ? locTeam(match.home, t) : picks.onextwo === "2" ? locTeam(match.away, t) : picks.onextwo === "X" ? "Beraberlik" : "—";
+
+  var GREEN = "#2FAE55";
+  function ratingPts(pred, act){ if (act == null) return null; var d = Math.abs(Number(pred) - act); return d <= 0.2 ? 5 : d <= 0.5 ? 3 : d <= 1.0 ? 1 : 0; }
+  var oneCorrect = (actual && actual.onextwo && picks.onextwo) ? (picks.onextwo === actual.onextwo) : null;
+  var motmCorrect = (actual && picks.motm && actual.motm) ? (String(picks.motm.id) === String(actual.motm.id)) : null;
+  var secLabel = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.4px" };
+  var colHead = { color: COLORS.textMuted, fontSize: 10, fontWeight: 700 };
+  function pts(v, on){ return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: (on && v > 0) ? GREEN : COLORS.textMuted }}>{on ? "+" + v : ""}</span>; }
+
+  // one 1X2 box: purple thick border = our pick, green fill = the actual result
+  function resultBox(v){
+    var picked = picks.onextwo === v;
+    var isActual = actual && actual.onextwo === v;
+    return <div key={v} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 11, fontWeight: 800, fontSize: 16,
+      border: picked ? "2.5px solid " + COLORS.accent : "1px solid " + COLORS.border,
+      background: isActual ? "rgba(47,174,85,0.18)" : COLORS.card,
+      color: isActual ? GREEN : COLORS.textPrimary }}>{v}</div>;
+  }
+  var twoCard = { flex: 1, minWidth: 0, background: COLORS.card, borderRadius: 11, padding: "9px 12px", border: "1px solid " + COLORS.border };
+
   return <div>
-    <div style={row}><span style={lab}>Maç Sonucu</span><span style={{ color: COLORS.textPrimary, fontWeight: 700 }}>{res}</span></div>
-    {picks.motm && <div style={row}><span style={lab}>Maçın Adamı</span><span style={{ color: COLORS.textPrimary, fontWeight: 700 }}>{picks.motm.name}</span></div>}
-    {(picks.ratings || []).map(function(r, i){
-      return <div key={i} style={row}><span style={lab}>{i === 0 ? "Reytingler" : ""}</span>
-        <span style={{ color: COLORS.textPrimary, fontWeight: 600, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
-        <span style={{ color: COLORS.accent, fontWeight: 800 }}>{Number(r.pred).toFixed(1)}</span></div>;
-    })}
+    {/* MAÇ SONUCU — 1 / X / 2 boxes */}
+    {picks.onextwo && <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+        <span style={secLabel}>Maç Sonucu</span>{pts(oneCorrect ? 3 : 0, actual && actual.onextwo != null)}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>{["1", "X", "2"].map(resultBox)}</div>
+    </div>}
+
+    {/* MAÇIN ADAMI — Senin / Gerçek */}
+    {picks.motm && <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+        <span style={secLabel}>Maçın Adamı</span>{pts(motmCorrect ? 10 : 0, actual && actual.motm != null)}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={twoCard}><div style={colHead}>Senin</div>
+          <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 700, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(picks.motm.name)}</div></div>
+        <div style={twoCard}><div style={colHead}>Gerçek</div>
+          <div style={{ color: motmCorrect ? GREEN : COLORS.textPrimary, fontSize: 14, fontWeight: 700, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{actual && actual.motm ? lastName(actual.motm.name) : "—"}</div></div>
+      </div>
+    </div>}
+
+    {/* REYTİNGLER — table: Senin | Gerçek | Puan */}
+    {picks.ratings && picks.ratings.length > 0 && <div>
+      <div style={Object.assign({ marginBottom: 6 }, secLabel)}>Reytingler</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 4 }}>
+        <span style={{ flex: 1 }} />
+        <span style={Object.assign({ width: 46, textAlign: "center" }, colHead)}>Senin</span>
+        <span style={Object.assign({ width: 46, textAlign: "center" }, colHead)}>Gerçek</span>
+        <span style={Object.assign({ width: 34, textAlign: "right" }, colHead)}>Puan</span>
+      </div>
+      {picks.ratings.map(function(r, i){
+        var act = (actual && actual.ratings) ? actual.ratings[String(r.id)] : null;
+        var p = ratingPts(r.pred, act);
+        return <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid " + COLORS.border }}>
+          <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+          <span style={{ width: 46, textAlign: "center", color: COLORS.accent, fontWeight: 800, fontSize: 13 }}>{Number(r.pred).toFixed(1)}</span>
+          <span style={{ width: 46, display: "flex", justifyContent: "center" }}>{act != null ? <RatingBadge rating={act} /> : <span style={{ color: COLORS.textMuted, fontSize: 12 }}>—</span>}</span>
+          <span style={{ width: 34, textAlign: "right", fontSize: 12, fontWeight: 800, color: (p && p > 0) ? GREEN : COLORS.textMuted }}>{p != null ? "+" + p : "—"}</span>
+        </div>;
+      })}
+    </div>}
   </div>;
 }
 
@@ -5098,7 +5177,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                     </button>}
               </span>
               {/* notifications bell (scored coupons) */}
-              <NotificationsBell loggedIn={loggedIn} matches={data.football || []} onOpenMatch={function(m){ setSelectedMatch(freshMatch(m && m.id) || m); }} />
+              <NotificationsBell loggedIn={loggedIn} matches={data.football || []} t={t} onOpenMatch={function(m){ setSelectedMatch(freshMatch(m && m.id) || m); }} />
               {/* hamburger — far right (settings, language, theme) */}
               <button onClick={function(){ setShowMenu(true); }} aria-label={t.menu} style={{ width: 38, height: 38, borderRadius: 12,
                 background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex",

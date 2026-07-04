@@ -60,11 +60,14 @@ async function fetchActual(matchId) {
       if (rv > motmR) { motmR = rv; motmId = p.id; }
     });
   });
-  return { onextwo: onextwo, motmId: motmId, ratings: ratings };
+  // hadRatings: were player ratings available? If not, we score the 1X2 now but keep re-scoring
+  // later (rated=false) so the rating/MOTM points aren't lost to an early scoring pass.
+  return { onextwo: onextwo, motmId: motmId, ratings: ratings, hadRatings: Object.keys(ratings).length > 0 };
 }
 
 async function scoreMatch(matchId) {
-  const r = await fetch(SB_URL + "/rest/v1/predictions?match_id=eq." + encodeURIComponent(matchId) + "&scored=eq.false&select=id,picks", { headers: sbHdr() });
+  // score coupons that are unscored OR were scored before ratings were available (rated=false)
+  const r = await fetch(SB_URL + "/rest/v1/predictions?match_id=eq." + encodeURIComponent(matchId) + "&or=(scored.eq.false,rated.eq.false)&select=id,picks", { headers: sbHdr() });
   if (!r.ok) return 0;
   const rows = await r.json();
   if (!rows || !rows.length) return 0;
@@ -75,17 +78,17 @@ async function scoreMatch(matchId) {
     const pts = scoreCoupon(row.picks || {}, actual);
     const up = await fetch(SB_URL + "/rest/v1/predictions?id=eq." + row.id, {
       method: "PATCH", headers: sbHdr({ Prefer: "return=minimal" }),
-      body: JSON.stringify({ points: pts, scored: true }),
+      body: JSON.stringify({ points: pts, scored: true, rated: actual.hadRatings }),
     });
     if (up.ok) n++;
   }
   return n;
 }
 
-// sweep: score every past-due, still-unscored match (capped) — used from the leaderboard
+// sweep: score past-due coupons that are unscored or not-yet-rated (capped) — used from the leaderboard
 async function sweep() {
   const nowIso = new Date().toISOString();
-  const r = await fetch(SB_URL + "/rest/v1/predictions?scored=eq.false&match_ts=lt." + encodeURIComponent(nowIso) + "&select=match_id&limit=1000", { headers: sbHdr() });
+  const r = await fetch(SB_URL + "/rest/v1/predictions?match_ts=lt." + encodeURIComponent(nowIso) + "&or=(scored.eq.false,rated.eq.false)&select=match_id&limit=1000", { headers: sbHdr() });
   if (!r.ok) return 0;
   const rows = await r.json();
   const ids = Array.from(new Set((rows || []).map(function (x) { return x.match_id; }))).slice(0, 50);

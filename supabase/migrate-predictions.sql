@@ -34,6 +34,9 @@ create table if not exists public.predictions (
 create index if not exists predictions_user_idx    on public.predictions (user_id, created_at desc);
 create index if not exists predictions_match_idx    on public.predictions (match_id);
 create index if not exists predictions_unscored_idx on public.predictions (match_id) where not scored;
+-- 'rated' = the player ratings were available when this was scored. If false, the coupon is
+-- re-scored later (ratings appear a while after kickoff) so rating points aren't lost.
+alter table public.predictions add column if not exists rated boolean not null default false;
 
 drop trigger if exists predictions_set_updated_at on public.predictions;
 create trigger predictions_set_updated_at before update on public.predictions
