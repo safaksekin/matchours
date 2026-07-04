@@ -220,16 +220,18 @@ function notifMarkSeen(ids) {
 }
 
 // Branded splash: our logo on the navbar-purple. Static while loading; fades out once the app mounts.
+// Shown ONCE per session (SPLASH_DONE) so switching bottom-nav tabs doesn't re-trigger it.
+var SPLASH_DONE = false;
 function Splash({ fade }) {
-  var [gone, setGone] = useState(false);
+  var [gone, setGone] = useState(fade && SPLASH_DONE);
   var [faded, setFaded] = useState(false);
   useEffect(function () {
-    if (!fade) return;
+    if (!fade || SPLASH_DONE) return;
     var r = requestAnimationFrame(function () { setFaded(true); });
-    var id = setTimeout(function () { setGone(true); }, 650);
+    var id = setTimeout(function () { setGone(true); SPLASH_DONE = true; }, 650);
     return function () { cancelAnimationFrame(r); clearTimeout(id); };
   }, [fade]);
-  if (fade && gone) return null;
+  if (fade && (gone || SPLASH_DONE)) return null;
   return <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 9999,
     background: "linear-gradient(135deg, #7A52E6 0%, #5A33CC 52%, #4322A0 100%)",
     display: "flex", alignItems: "center", justifyContent: "center",
