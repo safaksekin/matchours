@@ -2994,7 +2994,7 @@ function DayMatchList({ matches, t, isF1, onOpen }) {
   var sepStyle = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, padding: "14px 4px 8px", borderBottom: "1px solid " + COLORS.border, marginBottom: 2 };
   function liveRows(){
     var items = live.slice().sort(function(a, b){ return (b.minute || 0) - (a.minute || 0); }); // latest minute first
-    return items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+    return items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t} showLeague={true}
       divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; });
   }
   // small inline "Canlı" separator (icon + blinking dot) reused above the live rows
@@ -3019,7 +3019,7 @@ function DayMatchList({ matches, t, isF1, onOpen }) {
         var items = groups[k].slice().sort(function(a, b){ return ((a.ts || 0) - (b.ts || 0)) || (leaguePri(a) - leaguePri(b)); });
         return <div key={k} style={{ marginBottom: 4 }}>
           <div style={sepStyle}>{dayHeader(k)}</div>
-          {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t}
+          {items.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t} showLeague={true}
             divider={i < items.length - 1} onOpen={function(){ onOpen(m); }} />; })}
         </div>;
       })}
@@ -3037,7 +3037,19 @@ function DayMatchList({ matches, t, isF1, onOpen }) {
 }
 
 // League priority for ordering: WC(1) > UCL(2) > UEL(3) > Conf(848) > Premier(39) > rest.
-var LEAGUE_PRIORITY = { 1: 1, 2: 2, 3: 3, 848: 4, 39: 5 };
+// Same-kickoff tiebreak + finished-tab grouping order: big competitions on top, everything else normal.
+var LEAGUE_PRIORITY = {
+  1: 1,    // World Cup
+  2: 2,    // Champions League
+  3: 3,    // Europa League
+  848: 4,  // Conference League
+  39: 5,   // Premier League
+  140: 6,  // La Liga
+  135: 7,  // Serie A
+  78: 8,   // Bundesliga
+  61: 9,   // Ligue 1
+  203: 10, // Süper Lig
+};
 function leaguePri(m) { return LEAGUE_PRIORITY[m && m.leagueId] || 999; }
 
 // Matches grouped by league (never by day). World Cup on top, then the big European cups and
@@ -3102,7 +3114,7 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
 }
 
 // Compact row used inside the right-side list container.
-function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
+function MatchRow({ match, isF1, onOpen, t, divider, showDate, showLeague }) {
   var isLive = match.status === "live";
   var showScore = match.score && (isLive || match.status === "finished");
   var [hover, setHover] = useState(false);
@@ -3112,12 +3124,14 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate }) {
     style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 12px", borderRadius: 16, cursor: "pointer",
       background: hover ? "rgba(106,69,230,0.10)" : "transparent",
       transition: "background 0.3s cubic-bezier(0.22,1,0.36,1)", WebkitTapHighlightColor: "transparent" }}>
-    <div style={{ width: 56, flexShrink: 0 }}>
+    <div style={{ width: showLeague && !isF1 ? 62 : 56, flexShrink: 0 }}>
       {isLive ? <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.red, background: COLORS.red + "18",
         padding: "2px 7px", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 4 }}>
         <span style={{ width: 4, height: 4, borderRadius: "50%", background: COLORS.red, animation: "pulse 1.5s infinite", display: "inline-block" }} />
         {match.minute ? match.minute + "'" : t.live}</span>
       : <span style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 700 }}>{((showDate || match.status === "finished") && match.date) ? match.date : match.time}</span>}
+      {showLeague && !isF1 && match.league && <div style={{ color: COLORS.textMuted, fontSize: 9, fontWeight: 700, marginTop: 3, lineHeight: 1.15,
+        display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{match.league}</div>}
     </div>
     {isF1 ? <div style={{ flex: 1, color: COLORS.textPrimary, fontSize: 14, fontWeight: 700 }}>{match.home}</div>
     : <div style={{ flex: 1, minWidth: 0 }}>
