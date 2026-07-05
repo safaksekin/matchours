@@ -14,6 +14,13 @@ const LEAGUES = [
   { id: 78,  name: "Bundesliga",       season: 2025 },
   { id: 61,  name: "Ligue 1",          season: 2025 },
   { id: 203, name: "Super Lig",        season: 2025 },
+  // in-season summer leagues (calendar-year -> 2026 season)
+  { id: 292, name: "K League 1",         season: 2026 }, // South Korea
+  { id: 169, name: "Çin Süper Lig",      season: 2026 }, // China
+  { id: 113, name: "Allsvenskan",        season: 2026 }, // Sweden
+  { id: 244, name: "Veikkausliiga",      season: 2026 }, // Finland
+  { id: 116, name: "Belarus Premier",    season: 2026 }, // Belarus
+  { id: 103, name: "Eliteserien",        season: 2026 }, // Norway
 ];
 
 function hdr() { return { "x-apisports-key": process.env.APISPORTS_KEY || "" }; }
