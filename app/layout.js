@@ -1,5 +1,14 @@
 // app/layout.js
+import { Manrope } from "next/font/google";
 import { SITE_URL } from "./_lib/routes";
+
+// Modern geometric sans, self-hosted. latin-ext carries Turkish glyphs (ğ ş ı İ ç ö ü).
+const appFont = Manrope({
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-app",
+  display: "swap",
+});
 
 export const metadata = {
   metadataBase: new URL(SITE_URL),
@@ -19,8 +28,8 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="tr">
-      <body style={{ margin: 0 }}>{children}</body>
+    <html lang="tr" className={appFont.variable}>
+      <body style={{ margin: 0, fontFamily: "var(--font-app), 'Helvetica Neue', Helvetica, Arial, sans-serif", WebkitFontSmoothing: "antialiased", MozOsxFontSmoothing: "grayscale", fontVariantNumeric: "tabular-nums", fontFeatureSettings: "'tnum' 1, 'cv11' 1" }}>{children}</body>
     </html>
   );
 }

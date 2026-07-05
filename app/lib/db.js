@@ -108,7 +108,7 @@ export async function fetchComments(opts) {
   const nameById = {};
   (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
   return rows.map(function (r) {
-    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı" };
+    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı", user_id: r.user_id };
   });
 }
 
@@ -128,7 +128,7 @@ export async function fetchMatchComments(matchId) {
   const nameById = {};
   (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
   return rows.map(function (r) {
-    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı" };
+    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı", user_id: r.user_id };
   });
 }
 
@@ -351,4 +351,99 @@ export async function fetchMyPredLeagues() {
     .select("league_id, pred_leagues(id, name, code, owner_id)")
     .eq("user_id", uid);
   return (data || []).map(function (r) { return r.pred_leagues; }).filter(Boolean);
+}
+
+// ── Match Log (the spine: match star + style tags; player ratings go to `ratings`) ──
+// Insert-or-update this user's log for a match (unique on user+match -> upsert).
+export async function saveMatchLog(opts) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const { error } = await supabase.from("match_logs").upsert({
+    user_id: uid,
+    match_id: String(opts.matchId),
+    rating: opts.rating,
+    tags: opts.tags || [],
+    players: opts.players || [],
+    home: opts.home || null,
+    away: opts.away || null,
+    league: opts.league || null,
+    match_ts: opts.matchTs || null,
+  }, { onConflict: "user_id,match_id" });
+  return { error: error || null };
+}
+
+// This user's existing log for one match (or null).
+export async function fetchMyMatchLog(matchId) {
+  const uid = await getUserId();
+  if (!uid) return null;
+  const { data } = await supabase.from("match_logs").select("*")
+    .eq("user_id", uid).eq("match_id", String(matchId)).maybeSingle();
+  return data || null;
+}
+
+// Another user's logged matches (public read) — for their public profile / Taste Graph.
+export async function fetchUserLogs(userId, limit) {
+  if (!userId) return [];
+  const { data } = await supabase.from("match_logs").select("*")
+    .eq("user_id", userId).order("created_at", { ascending: false }).limit(limit || 80);
+  return data || [];
+}
+
+// Another user's comments (public read) — for their public profile.
+export async function fetchUserComments(userId, limit) {
+  if (!userId) return [];
+  const { data } = await supabase.from("comments").select("*")
+    .eq("user_id", userId).order("created_at", { ascending: false }).limit(limit || 40);
+  return data || [];
+}
+
+// This user's logged matches, newest first — the diary / Taste-Graph source.
+export async function fetchMyLogs(limit) {
+  const uid = await getUserId();
+  if (!uid) return [];
+  const { data } = await supabase.from("match_logs").select("*")
+    .eq("user_id", uid).order("created_at", { ascending: false }).limit(limit || 80);
+  return data || [];
+}
+
+// Delete this user's whole log for a match — the match_log AND its player ratings (nothing orphaned).
+export async function deleteMatchLog(matchId) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const mid = String(matchId);
+  await supabase.from("ratings").delete().eq("user_id", uid).eq("match_id", mid).eq("target_type", "player");
+  const { error } = await supabase.from("match_logs").delete().eq("user_id", uid).eq("match_id", mid);
+  return { error: error || null };
+}
+
+// Everyone's match logs for one match (public read), newest first, with usernames — the Ratings tab.
+export async function fetchMatchLogs(matchId) {
+  const { data } = await supabase.from("match_logs").select("user_id, rating, tags, created_at")
+    .eq("match_id", String(matchId)).order("created_at", { ascending: false }).limit(120);
+  const rows = data || [];
+  if (!rows.length) return [];
+  const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
+  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
+  const nameById = {};
+  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  return rows.map(function (r) {
+    return { userId: r.user_id, user: nameById[r.user_id] || "kullanıcı", rating: Number(r.rating), tags: r.tags || [], created_at: r.created_at };
+  });
+}
+
+// How many people logged (rated) each match, in ONE query — the finished-match list badge.
+export async function fetchLogCounts(matchIds) {
+  const ids = Array.from(new Set((matchIds || []).map(String).filter(Boolean)));
+  if (!ids.length) return {};
+  const { data } = await supabase.from("match_logs").select("match_id").in("match_id", ids);
+  const counts = {};
+  (data || []).forEach(function (r) { const k = String(r.match_id); counts[k] = (counts[k] || 0) + 1; });
+  return counts;
+}
+
+// A specific user's player ratings for one match (for the rating-detail sheet).
+export async function fetchUserMatchRatings(matchId, userId) {
+  const { data } = await supabase.from("ratings").select("target_id, target_name, rating")
+    .eq("match_id", String(matchId)).eq("user_id", userId).eq("target_type", "player");
+  return (data || []).map(function (r) { return { id: r.target_id, name: r.target_name, rating: Number(r.rating) }; });
 }

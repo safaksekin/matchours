@@ -7,7 +7,9 @@ import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addCommen
   fetchCommentCounts, fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername,
   savePrediction, fetchMyPrediction, fetchMyPredictionsFor, fetchPredictionCounts, fetchMyPredictions, fetchPredLeaderboard,
   createPredLeague, joinPredLeague, fetchMyPredLeagues, getUserId, deletePrediction,
-  fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile } from "./lib/db";
+  fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile,
+  saveMatchLog, fetchMyMatchLog, fetchMyLogs, fetchMatchLogs, fetchUserMatchRatings, fetchLogCounts, deleteMatchLog,
+  fetchUserLogs, fetchUserComments } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -188,6 +190,42 @@ function PredCount({ match }) {
   </span>;
 }
 
+// Batched "how many people rated (logged) this match" counts — same pattern as predictions.
+var LCNT = { cache: {}, pending: new Set(), listeners: new Set(), timer: null };
+function lcntEmit() { LCNT.listeners.forEach(function (fn) { fn(); }); }
+function lcntFlush() {
+  LCNT.timer = null;
+  var ids = Array.from(LCNT.pending); LCNT.pending.clear();
+  if (!ids.length) return;
+  fetchLogCounts(ids).then(function (map) {
+    ids.forEach(function (id) { LCNT.cache[id] = (map && map[id]) || 0; }); lcntEmit();
+  }).catch(function () { ids.forEach(function (id) { LCNT.cache[id] = 0; }); lcntEmit(); });
+}
+function lcntRequest(id) {
+  if (id == null) return; var k = String(id);
+  if (k in LCNT.cache) return; LCNT.cache[k] = undefined; LCNT.pending.add(k);
+  if (!LCNT.timer) LCNT.timer = setTimeout(lcntFlush, 60);
+}
+function useLogCount(id) {
+  var [, force] = useState(0);
+  useEffect(function () {
+    var fn = function () { force(function (x) { return x + 1; }); };
+    LCNT.listeners.add(fn); lcntRequest(id);
+    return function () { LCNT.listeners.delete(fn); };
+  }, [id]);
+  var v = LCNT.cache[String(id)];
+  return (v == null) ? 0 : v;
+}
+// Finished-match list badge: how many people rated this match (star icon), replaces the prediction count.
+function RatingCount({ match }) {
+  var c = useLogCount(match && match.id);
+  if (!match || match.homeId == null) return null; // football matches only
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: COLORS.textMuted, fontSize: 12, fontWeight: 700, flexShrink: 0, paddingLeft: 2 }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.27l-5.9 3.09 1.13-6.58L2.45 9.14l6.6-.96z" /></svg>
+    {c}
+  </span>;
+}
+
 // Quick 1X2 predict widget on a feed card — the retention hook: predict without opening the match.
 function Quick1x2({ match, layout }) {
   var fav = useFavorites(); // re-render on login
@@ -200,7 +238,7 @@ function Quick1x2({ match, layout }) {
       style={{ flex: vertical ? 1 : "0 0 auto", minWidth: vertical ? 0 : 30, padding: vertical ? "9px 0" : "5px 0", width: vertical ? "auto" : 30,
         borderRadius: vertical ? 12 : 8, cursor: "pointer", fontFamily: FONT, fontSize: vertical ? 14 : 12, fontWeight: 800,
         border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : (vertical ? COLORS.card : "transparent"),
-        boxShadow: on ? "none" : "none", color: on ? "#fff" : COLORS.textSecondary, WebkitTapHighlightColor: "transparent",
+        color: on ? "#fff" : COLORS.textSecondary, WebkitTapHighlightColor: "transparent",
         transition: "background 0.2s ease" }}>{v}</button>;
   }
   return <div onClick={function (e) { e.stopPropagation(); }}
@@ -282,7 +320,7 @@ function NotificationsBell({ loggedIn, onOpenMatch, matches, t }) {
       border: "1px solid " + COLORS.border, borderRadius: 14, boxShadow: "0 12px 36px rgba(20,40,40,0.30)", overflow: "hidden", maxHeight: "75vh", overflowY: "auto" }}>
       <div style={{ padding: "12px 14px", borderBottom: "1px solid " + COLORS.border, color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>Bildirimler</div>
         {notifs.length === 0
-          ? <div style={{ padding: "22px 14px", color: COLORS.textMuted, fontSize: 13, textAlign: "center" }}>Henüz bildirim yok. Kuponların puanlanınca ve favori takımların oynayınca burada görünür.</div>
+          ? <EmptyState icon={<EmptyIcon name="bell" />} title="Bildirim yok" hint="Kuponların puanlanınca ve favori takımların oynayınca burada görünür." />
           : notifs.map(function (x) {
             var isCoupon = x.kind === "coupon";
             var mn = (x.home && x.away) ? (locTeam(x.home, t) + " - " + locTeam(x.away, t)) : "Maç";
@@ -290,7 +328,7 @@ function NotificationsBell({ loggedIn, onOpenMatch, matches, t }) {
               style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 14px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
               <span style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {isCoupon
-                  ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3" /></svg>
+                  ? <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
                   : <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>}
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
@@ -389,7 +427,7 @@ const THEME_VARS = {
     "--purple": "#2FAE55", "--purpleDim": "rgba(47,174,85,0.16)",
     "--textPrimary": "#161A35", "--textSecondary": "#585E82", "--textMuted": "#9AA0C0",
     "--red": "#FF0000", "--yellow": "#F8DE22",
-    "--modalGrad": "linear-gradient(180deg, rgba(255,255,255,0.85), rgba(242,243,252,0.93))",
+    "--modalGrad": "linear-gradient(180deg, rgba(255,255,255,0.70), rgba(242,243,252,0.80))",
     "--modalBorder": "rgba(255,255,255,0.6)",
   },
   dark: {
@@ -403,7 +441,7 @@ const THEME_VARS = {
     "--purple": "#3FD176", "--purpleDim": "rgba(63,209,118,0.18)",
     "--textPrimary": "#E8EAFB", "--textSecondary": "#A8AECE", "--textMuted": "#767C9E",
     "--red": "#FF0000", "--yellow": "#F8DE22",
-    "--modalGrad": "linear-gradient(180deg, rgba(30,30,34,0.92), rgba(14,14,16,0.96))",
+    "--modalGrad": "linear-gradient(180deg, rgba(30,30,34,0.80), rgba(14,14,16,0.88))",
     "--modalBorder": "rgba(255,255,255,0.08)",
   },
 };
@@ -417,7 +455,7 @@ function applyTheme(theme) {
   Object.keys(vars).forEach(function(k){ root.style.setProperty(k, vars[k]); });
   root.style.colorScheme = theme;
 }
-const FONT = "Helvetica Neue, Helvetica, Arial, sans-serif";
+const FONT = "var(--font-app), 'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 // Local YYYY-MM-DD (avoids the UTC day-shift of toISOString near midnight).
 function isoLocal(d) {
@@ -792,7 +830,7 @@ function CommentSection({ match, t }) {
     var cancelled = false;
     // match by target_id OR match_id so every comment on this match shows (not just mine)
     fetchMatchComments(match.id).then(function(rows){
-      if (!cancelled) setList(rows.map(function(c){ return { user: c.user, text: c.text, time: fmtCommentTime(c.created_at) }; }));
+      if (!cancelled) setList(rows.map(function(c){ return { user: c.user, user_id: c.user_id, text: c.text, time: fmtCommentTime(c.created_at) }; }));
     });
     return function(){ cancelled = true; };
   }, [match && match.id]);
@@ -808,14 +846,14 @@ function CommentSection({ match, t }) {
       <input value={v} onChange={function(e){ setV(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") submit(); }}
         placeholder={t.writeComment} style={{ flex: 1, padding: "9px 13px", background: COLORS.cardAlt,
         border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accent, boxShadow: "none", border: "none", borderRadius: 12,
+      <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
         color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.send}</button>
     </div>
     {list.length === 0 && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>—</div>}
     {list.map(function(c, i){ return <div key={i} style={{ padding: "10px 12px", background: COLORS.cardAlt, borderRadius: 12,
       marginBottom: 7, border: "none" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ color: COLORS.accent, fontSize: 12, fontWeight: 700 }}>@{c.user}</span>
+        <UserLink userId={c.user_id} username={c.user} t={t} style={{ color: COLORS.accent, fontSize: 12, fontWeight: 700 }} />
         <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{c.time}</span></div>
       <span style={{ color: COLORS.textPrimary, fontSize: 13 }}>{c.text}</span></div>; })}
   </div>;
@@ -985,6 +1023,12 @@ function Jersey({ number, color, out }) {
 }
 
 // Player head shot for the pitch (falls back to a numbered disc when no photo / image fails).
+// White disc holding a small icon — for markers over the green pitch.
+function PitchDisc({ size, children, style }) {
+  return <span style={Object.assign({ display: "inline-flex", alignItems: "center", justifyContent: "center",
+    width: size, height: size, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }, style || {})}>{children}</span>;
+}
+
 function PlayerHead({ photo, number, name, out }) {
   var [ok, setOk] = useState(!!photo);
   var s = 44;
@@ -997,24 +1041,20 @@ function PlayerHead({ photo, number, name, out }) {
       : <div style={{ width: s, height: s, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
           background: "rgba(255,255,255,0.92)", border: ring, boxShadow: shadow, color: "#15543f", fontSize: 15, fontWeight: 800 }}>
           {number != null ? number : (name ? name[0] : "")}</div>}
-    {out && <span style={{ position: "absolute", top: -4, right: -4, width: 17, height: 17, borderRadius: "50%",
-      background: COLORS.red, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }}>
-      <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M7 7h10M13 3l4 4-4 4" /><path d="M17 17H7M11 21l-4-4 4-4" /></svg></span>}
+    {out && <span style={{ position: "absolute", top: -4, left: -4, width: 18, height: 18, borderRadius: "50%",
+      background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" }}>
+      <MaskIcon src="/swap_icon.png" size={11} color="#fff" /></span>}
   </div>;
 }
 
-// One ball per goal (stacked) + a boot when the player assisted.
+// Goal (purple ball PNG) + assist (purple boot, masked). One icon language, no emoji.
 function GoalAssistIcons({ g, a, style }) {
   if (!g && !a) return null;
-  var balls = "";
-  for (var i = 0; i < Math.min(g || 0, 5); i++) balls += "⚽";
-  return <span style={Object.assign({ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, lineHeight: 1 }, style || {})}>
-    {balls && <span style={{ letterSpacing: "-5px", paddingRight: 5, filter: "drop-shadow(0 1px 1.5px rgba(0,0,0,0.55))" }}>{balls}</span>}
-    {a > 0 && <span title="asist" style={{ display: "inline-flex" }}>
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 6v6c0 1.1.9 2 2 2h11l4-2.2c.6-.3 1-1 1-1.7 0-1-.8-1.6-1.8-1.8l-5.2-1L11 4H5a2 2 0 0 0-2 2z" /><path d="M3 18h18" /></svg>
-    </span>}
+  return <span style={Object.assign({ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, lineHeight: 1 }, style || {})}>
+    {g > 0 && <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+      <img src="/goal_icon.png" alt="gol" style={{ width: 13, height: 13, display: "block" }} />{g > 1 && <span>{g}</span>}</span>}
+    {a > 0 && <span title="asist" style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+      <MaskIcon src="/assist_icon.png" size={13} color={COLORS.accent} />{a > 1 && <span>{a}</span>}</span>}
   </span>;
 }
 
@@ -1135,7 +1175,18 @@ function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals,
                 {ratings && ratings[p.id] != null && <RatingBadge rating={ratings[p.id]} style={{ position: "absolute", bottom: -5, left: "50%",
                   transform: "translateX(-50%)", minWidth: 0, padding: "1px 6px", fontSize: 12, borderRadius: 6,
                   boxShadow: "0 1px 3px rgba(0,0,0,0.45)" }} />}
-                <GoalAssistIcons g={goals && goals[p.id]} a={assists && assists[p.id]} style={{ position: "absolute", top: -7, right: -10, color: "#fff" }} />
+                {(function(){
+                  var g = (goals && goals[p.id]) || 0, a = (assists && assists[p.id]) || 0;
+                  if (!g && !a) return null;
+                  var goalRow = [];
+                  for (var gi = 0; gi < Math.min(g, 4); gi++) goalRow.push(
+                    <PitchDisc key={"g" + gi} size={17} style={{ marginLeft: gi ? -7 : 0, zIndex: gi }}>
+                      <img src="/goal_icon.png" alt="gol" style={{ width: 13, height: 13, display: "block" }} /></PitchDisc>);
+                  return <div style={{ position: "absolute", top: -7, right: -9, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                    {g > 0 && <div style={{ display: "flex", alignItems: "center" }}>{goalRow}</div>}
+                    {a > 0 && <PitchDisc size={17}><MaskIcon src="/assist_icon.png" size={11} color={COLORS.accent} /></PitchDisc>}
+                  </div>;
+                })()}
               </div>
               <span style={{ color: "#fff", fontSize: 11, fontWeight: 500, marginTop: 5, textAlign: "center",
                 textShadow: "0 1px 3px rgba(0,0,0,0.65)", lineHeight: 1.1,
@@ -1313,7 +1364,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
         <RatingSlider value={userRating} onChange={function(v){ setUserRating(v); setRatingSubmitted(false); }} />
         <button onClick={submitRating} disabled={ratingSubmitted}
           style={{ marginTop: 12, width: "100%", padding: "10px 16px", borderRadius: 12, border: "none",
-            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accent, boxShadow: ratingSubmitted ? "none" : "none", color: ratingSubmitted ? COLORS.textSecondary : "#fff",
+            background: ratingSubmitted ? COLORS.cardAlt : COLORS.accent, color: ratingSubmitted ? COLORS.textSecondary : "#fff",
             fontWeight: 800, fontSize: 14, cursor: ratingSubmitted ? "default" : "pointer", fontFamily: FONT, transition: "all 0.2s",
             WebkitTapHighlightColor: "transparent" }}>
           {ratingSubmitted ? (t.rateSaved + " · " + userRating.toFixed(1)) : t.rateSubmit}
@@ -1328,7 +1379,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
             onKeyDown={function(e){ if (e.key === "Enter") addComment(); }}
             placeholder={t.writeComment} style={{ flex: 1, minWidth: 0, padding: "9px 13px", background: COLORS.cardAlt,
               border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accent, boxShadow: "none", border: "none", borderRadius: 12,
+          <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
             color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.send}</button>
         </div>
         {pComments.map(function(c, i){ return <div key={i} style={{ marginTop: 8, padding: "10px 12px", background: COLORS.cardAlt,
@@ -1420,7 +1471,7 @@ function PredictionCoupon({ match, t }) {
   // purple tint stays, but flat (no bordered "card"). The tab already says "Tahmin", so no header label.
   var box = { background: COLORS.glassPurple, borderRadius: 14, padding: "14px 16px" };
   var head = locked ? <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-    <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.textMuted, background: COLORS.cardAlt, padding: "1px 7px", borderRadius: 6 }}>KİLİTLİ</span>
+    <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.textMuted, background: COLORS.cardAlt, padding: "1px 7px", borderRadius: 6 }}>Kilitli</span>
   </div> : null;
 
   // not logged in -> prompt (only pre-kickoff)
@@ -1428,7 +1479,7 @@ function PredictionCoupon({ match, t }) {
     if (locked) return null;
     return <div style={{ marginBottom: 16 }}>{head}
       <div style={box}><div style={{ color: COLORS.textSecondary, fontSize: 13 }}>Bu maça tahmin yap, tuttukça itibar puanı kazan.
-        <button onClick={function(){ if (FAV.onNeedLogin) FAV.onNeedLogin(); }} style={{ marginLeft: 8, padding: "6px 12px", background: COLORS.accent, boxShadow: "none", color: "#fff", border: "none", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Giriş yap</button>
+        <button onClick={function(){ if (FAV.onNeedLogin) FAV.onNeedLogin(); }} style={{ marginLeft: 8, padding: "6px 12px", background: COLORS.accent, color: "#fff", border: "none", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Giriş yap</button>
       </div></div>
     </div>;
   }
@@ -1480,7 +1531,7 @@ function PredictionCoupon({ match, t }) {
   function pill(val, label, sub){
     var on = onextwo === val;
     return <button onClick={function(){ setOnextwo(on ? null : val); }} style={{ flex: 1, padding: "9px 4px", borderRadius: 12, cursor: "pointer",
-      border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : COLORS.card, boxShadow: on ? "none" : "none",
+      border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : COLORS.card,
       color: on ? "#fff" : COLORS.textPrimary, fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
       <div style={{ fontSize: 15, fontWeight: 800 }}>{label}</div>
       <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
@@ -1511,14 +1562,14 @@ function PredictionCoupon({ match, t }) {
   return <div style={{ marginBottom: 16 }}>{head}
     <div style={box}>
       {/* 1X2 */}
-      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 7 }}>MAÇ SONUCU</div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 7 }}>Maç sonucu</div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         {pill("1", "1", locTeam(match.home, t))}
         {pill("X", "X", "Beraberlik")}
         {pill("2", "2", locTeam(match.away, t))}
       </div>
       {/* MOTM */}
-      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 7 }}>MAÇIN ADAMI <span style={{ color: COLORS.accent }}>+10</span></div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 7 }}>Maçın adamı <span style={{ color: COLORS.accent }}>+10</span></div>
       <button onClick={function(){ setPickFor(pickFor === "motm" ? null : "motm"); setQ(""); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
         borderRadius: 12, border: "1px solid " + COLORS.border, background: COLORS.card, cursor: "pointer", fontFamily: FONT, marginBottom: pickFor === "motm" ? 8 : 14, WebkitTapHighlightColor: "transparent" }}>
         {motm
@@ -1528,7 +1579,7 @@ function PredictionCoupon({ match, t }) {
       </button>
       {pickFor === "motm" && picker("motm", function(p){ setMotm(p); })}
       {/* rating picks: 2 user-chosen (tap on the pitch) + 1 system suggestion */}
-      <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, marginBottom: 3 }}>OYUNCU REYTİNGLERİ <span style={{ color: COLORS.accent }}>+5</span></div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 3 }}>Oyuncu reytingleri <span style={{ color: COLORS.accent }}>+5</span></div>
       <div style={{ color: COLORS.textMuted, fontSize: 11, fontWeight: 600, marginBottom: 9 }}>{cand && cand.lineups ? "Sahadan 2 oyuncu seç, 1'ini sistem önerir · maç sonu reytingini tahmin et" : "2 oyuncuyu sen seç, 1'ini sistem önerir · maç sonu reytingini tahmin et"}</div>
       {cand && cand.lineups
         ? (function(){
@@ -1548,7 +1599,7 @@ function PredictionCoupon({ match, t }) {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sysPlayer.name}</span>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: COLORS.accent, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: COLORS.accent, padding: "1px 6px", borderRadius: 5 }}>Sistem</span>
                   </div>
                   <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{locTeam(sysPlayer.team, t)}</div>
                 </div>
@@ -1573,7 +1624,7 @@ function PredictionCoupon({ match, t }) {
                     borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
                     <PredHead photo={r.photo} size={26} />
                     <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
-                    {sysId != null && String(r.id) === String(sysId) && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>}
+                    {sysId != null && String(r.id) === String(sysId) && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>Sistem</span>}
                     <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 14, fontWeight: 800 }}>{r.val.toFixed(1)}</span>
                     <button onClick={function(e){ e.stopPropagation(); removeRatingById(r.id); }} aria-label="kaldır" style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2 }}>×</button>
                   </div>; })}
@@ -1586,7 +1637,7 @@ function PredictionCoupon({ match, t }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
                   <PredHead photo={r.photo} size={24} />
                   <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
-                  {r.system && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>SİSTEM</span>}
+                  {r.system && <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.accent, background: COLORS.accentDim, padding: "1px 6px", borderRadius: 5 }}>Sistem</span>}
                   <span style={{ marginLeft: "auto", color: COLORS.accent, fontSize: 14, fontWeight: 800 }}>{r.val.toFixed(1)}</span>
                   <button onClick={function(){ removeRating(i); }} aria-label="kaldır" style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2 }}>×</button>
                 </div>
@@ -1598,7 +1649,7 @@ function PredictionCoupon({ match, t }) {
                   background: "transparent", color: COLORS.textSecondary, cursor: "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 700, marginBottom: 14, WebkitTapHighlightColor: "transparent" }}>+ Oyuncu ekle</button>)}
           </>}
       <button onClick={save} disabled={saving} style={{ width: "100%", marginTop: 4, padding: "11px 16px", borderRadius: 12, border: "none",
-        background: saved ? COLORS.cardAlt : COLORS.accent, boxShadow: saved ? "none" : "none", color: saved ? COLORS.accent : "#fff",
+        background: saved ? COLORS.cardAlt : COLORS.accent, color: saved ? COLORS.accent : "#fff",
         fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
         {saved ? "✓ Kaydedildi" : (mine ? "Kuponu Güncelle" : "Kuponu Kaydet")}</button>
     </div>
@@ -1633,7 +1684,7 @@ function CouponSummary({ picks, match, t }) {
   function ratingPts(pred, act){ if (act == null) return null; var d = Math.abs(Number(pred) - act); return d <= 0.2 ? 5 : d <= 0.5 ? 3 : d <= 1.0 ? 1 : 0; }
   var oneCorrect = (actual && actual.onextwo && picks.onextwo) ? (picks.onextwo === actual.onextwo) : null;
   var motmCorrect = (actual && picks.motm && actual.motm) ? (String(picks.motm.id) === String(actual.motm.id)) : null;
-  var secLabel = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.4px" };
+  var secLabel = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 800, letterSpacing: "-0.01em" };
   var colHead = { color: COLORS.textMuted, fontSize: 10, fontWeight: 700 };
   function pts(v, on){ return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: (on && v > 0) ? GREEN : COLORS.textMuted }}>{on ? "+" + v : ""}</span>; }
 
@@ -1720,7 +1771,7 @@ function RatingConsensus({ match, t }) {
       <span style={{ color: COLORS.accent, display: "flex" }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20v-6M6 20v-4M18 20V8"/><circle cx="12" cy="6" r="2"/></svg>
       </span>
-      <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>Rating Konsensüsü</span>
+      <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em" }}>Rating Konsensüsü</span>
     </div>
     <div style={{ background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder, borderRadius: 16, padding: "14px 16px" }}>
       <div style={{ color: COLORS.textPrimary, fontSize: 13.5, lineHeight: 1.55, marginBottom: 12 }}>
@@ -1915,10 +1966,12 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
   if (!isF1) tabs.push({ id: "h2h", label: t.h2hLabel });
   if (!isF1) tabs.push({ id: "scorers", label: t.scorers });
   if (s.channels.length > 0) tabs.push({ id: "tv", label: t.tv });
+  if (!isF1 && match.status === "finished") tabs.push({ id: "ratings", label: "Ratingler" });
   tabs.push({ id: "comments", label: t.comments });
 
   return <div style={{ background: "transparent", padding: "14px 18px 18px",
     }}>
+    {!isF1 && match.status === "finished" && <MatchLogCard match={match} lineups={detail && detail.lineups} t={t} />}
     <div style={{ marginBottom: 12 }}>
       <UnderlineTabs indicatorColor={COLORS.accent} tabs={tabs} active={tab} onChange={setTab} />
     </div>
@@ -1979,7 +2032,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
                     var c = m.result === "W" ? COLORS.purple : (m.result === "L" ? "#FF0000" : "#F8DE22");
                     return <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 0", minWidth: 0 }}>
                       <span style={{ flexShrink: 0, minWidth: 42, textAlign: "center", padding: "4px 7px", borderRadius: 7,
-                        background: c, color: "#fff", fontSize: 12, fontWeight: 800, boxShadow: "0 2px 5px " + c + "59" }}>{m.score}</span>
+                        background: c, color: "#fff", fontSize: 12, fontWeight: 800 }}>{m.score}</span>
                       <span style={{ flex: 1, color: COLORS.textSecondary, fontSize: 11, fontWeight: 600,
                         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{locTeam(m.opp, t)}</span>
                     </div>; })}
@@ -2016,7 +2069,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
     </div>}
 
     {tab === "h2h" && <div>
-      {h2hLoading ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.loading}</div>
+      {h2hLoading ? <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>
        : h2h.total === 0 ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.noH2h}</div>
        : <>
         <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center", marginBottom: 18 }}>
@@ -2048,7 +2101,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
     </div>}
 
     {tab === "scorers" && <div>
-      {scLoading ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.loading}</div>
+      {scLoading ? <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>
        : (!scorers || scorers.length === 0) ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>—</div>
        : scorers.map(function(sc, i){ return <div key={i} style={{ display: "flex", alignItems: "center", gap: 10,
           padding: "9px 12px", marginBottom: 6, background: COLORS.card, borderRadius: 12, border: "none" }}>
@@ -2070,7 +2123,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
       <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700 }}>{ch}</span></div>; })}</div>}
 
     {tab === "squads" && <div>
-      {dtLoading ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.loading}</div>
+      {dtLoading ? <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>
        : (!detail || !detail.lineups || (detail.lineups.home.starting.length === 0 && detail.lineups.away.starting.length === 0))
          ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.lineupSoon}</div>
        : (function(){
@@ -2174,7 +2227,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
     </div>}
 
     {tab === "matchstats" && <div>
-      {dtLoading ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.loading}</div>
+      {dtLoading ? <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>
        : (!detail || !detail.stats || (!detail.stats.home && !detail.stats.away))
          ? (detail && detail.season && (detail.season.home || detail.season.away)
             ? <SeasonStats season={detail.season} home={locTeam(match.home, t)} away={locTeam(match.away, t)} t={t} />
@@ -2230,7 +2283,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
     </div>}
 
     {tab === "summary" && <div>
-      {dtLoading ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.loading}</div>
+      {dtLoading ? <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>
        : !hasTimeline ? <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "20px 0" }}>{t.noEvents}</div>
        : <div style={{ position: "relative" }}>
           {/* center vertical line */}
@@ -2240,6 +2293,8 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
           })}
         </div>}
     </div>}
+
+    {tab === "ratings" && <MatchRatingsTab match={match} t={t} />}
 
     {tab === "comments" && <CommentSection match={match} t={t} />}
 
@@ -2286,7 +2341,8 @@ function FeaturedCarousel({ matches, isF1, t, onOpen }) {
         width: 32, height: 32, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.85)",
         cursor: "pointer", color: COLORS.textPrimary, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center",
         justifyContent: "center", zIndex: 3, boxShadow: "0 2px 8px rgba(20,40,40,0.12)", WebkitTapHighlightColor: "transparent" }}>
-      {left ? "‹" : "›"}</button>;
+      {left ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>}</button>;
   };
 
   return <div>
@@ -2333,7 +2389,7 @@ function FeaturedCarousel({ matches, isF1, t, onOpen }) {
 
         {/* quick 1X2 prediction — predict straight from the carousel */}
         {!isF1 && m.status === "upcoming" && <div style={{ marginTop: 22 }}>
-          <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 800, textAlign: "center", marginBottom: 8, letterSpacing: "0.6px" }}>TAHMİNİN</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 11, fontWeight: 800, textAlign: "center", marginBottom: 8, letterSpacing: "-0.01em" }}>Tahminin</div>
           <Quick1x2 match={m} layout="below" />
         </div>}
 
@@ -2391,11 +2447,12 @@ function MajorStats({ leagueId, season, t }) {
     return <button onClick={onClick} aria-label={left ? "prev" : "next"} style={{ width: 26, height: 26, borderRadius: 8,
       border: "none", background: COLORS.cardAlt, cursor: "pointer", color: COLORS.textPrimary,
       fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
-      WebkitTapHighlightColor: "transparent" }}>{left ? "‹" : "›"}</button>;
+      WebkitTapHighlightColor: "transparent" }}>{left
+        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>}</button>;
   };
 
-  return <div style={{ marginTop: 16, background: COLORS.card, borderRadius: 22, border: "none",
-    padding: "16px 18px", boxShadow: "0 2px 14px rgba(20,40,40,0.05)" }}>
+  return <div style={{ marginTop: 16, background: COLORS.card, borderRadius: 18, border: "none", padding: "16px 18px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
       <span style={{ fontSize: 13, fontWeight: 800, color: COLORS.textPrimary }}>{isScorers ? t.topScorers : t.topAssists}</span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2433,8 +2490,8 @@ function MajorStats({ leagueId, season, t }) {
 function LeagueTree({ groups, loading, t, selectedId, onSelect }) {
   var [openCountry, setOpenCountry] = useState(null); // single-open accordion (null = first group open)
   if (!loading && (!groups || groups.length === 0)) return null;
-  return <div style={{ background: COLORS.card, borderRadius: 22, border: "none",
-    boxShadow: "0 2px 14px rgba(20,40,40,0.05)", marginBottom: 16, overflow: "hidden",
+  return <div style={{ background: COLORS.card, borderRadius: 22, border: "1px solid " + COLORS.border,
+    marginBottom: 16, overflow: "hidden",
     animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
     <div style={{ padding: "13px 16px", fontSize: 13, fontWeight: 800, color: COLORS.textPrimary,
       borderBottom: "1px solid " + COLORS.border }}>{t.leaguesTitle}</div>
@@ -2619,8 +2676,7 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
     past = lastRound ? allPast.filter(function(m){ return m.round === lastRound; }) : allPast;
   }
   var group0 = (standings && standings.length) ? standings[0] : null;
-  var sTitle = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px", margin: "0 0 10px" };
-  var box = { background: COLORS.card, borderRadius: 18, border: "none", padding: 8 };
+  var box = { background: COLORS.card, borderRadius: 18, border: "1px solid " + COLORS.border, padding: 8 };
   // date-grouped match list with day separators (like the main feed); ascending=true -> soonest day first
   function groupedList(list, ascending){
     var todayKey = isoLocal(new Date());
@@ -2656,11 +2712,10 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
           <div style={{ color: COLORS.textPrimary, fontSize: 21, fontWeight: 800,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{league.name}</div>
         </div>
-        <button onClick={onClear} aria-label="kapat" style={{ width: 34, height: 34, borderRadius: 999, border: "1px solid " + COLORS.glassBorder,
-          background: "rgba(0,0,0,0.30)", color: COLORS.textPrimary, cursor: "pointer", display: "flex",
-          alignItems: "center", justifyContent: "center", flexShrink: 0, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)", WebkitTapHighlightColor: "transparent" }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <button onClick={onClear} aria-label="kapat" className="mo-xbtn" style={{ width: 34, height: 34, borderRadius: 999,
+          border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.textSecondary, cursor: "pointer", display: "flex",
+          alignItems: "center", justifyContent: "center", flexShrink: 0, WebkitTapHighlightColor: "transparent" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
       {/* section tabs: sliding-underline tab bar (always purple); sits inside the banner */}
@@ -2695,7 +2750,8 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
                     var y = el.getBoundingClientRect().top + window.scrollY - off;
                     window.scrollTo({ top: y, behavior: "smooth" });
                   }}
-                  style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 10, border: "none", background: COLORS.card,
+                  className="mo-lgchip"
+                  style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 10, border: "1px solid " + COLORS.border, background: "transparent",
                     color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap",
                     WebkitTapHighlightColor: "transparent" }}>{g.name || (t.standing + " " + (gi + 1))}</button>; })}
             </div>}
@@ -2703,7 +2759,7 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
               if (!g.rows || !g.rows.length) return null;
               return <div key={gi} ref={function(el){ groupRefs.current[gi] = el; }} style={{ marginBottom: 16, scrollMarginTop: 8 }}>
                 {g.name && <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, margin: "0 0 8px", padding: "0 2px" }}>{g.name}</div>}
-                <div style={{ background: COLORS.card, borderRadius: 12, border: "none", overflow: "hidden" }}>
+                <div style={{ background: COLORS.card, borderRadius: 12, border: "1px solid " + COLORS.border, overflow: "hidden" }}>
                   <div style={{ display: "flex", padding: "6px 12px", fontSize: 10, color: COLORS.textMuted, fontWeight: 700, borderBottom: "1px solid " + COLORS.border }}>
                     <span style={{ width: 20 }}>#</span><span style={{ flex: 1 }}>{t.team}</span>
                     <span style={{ width: 24, textAlign: "center" }}>{t.played}</span>
@@ -2725,7 +2781,7 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
                 </div>
               </div>; })}
           </div>
-        : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{standings === null ? t.loading : t.noStandings}</div>}
+        : (standings === null ? <SkeletonRows rows={8} card={false} /> : <EmptyState icon={<EmptyIcon name="ball" />} title={t.noStandings} />)}
       </div>}
 
       {tab === "scorers" && (scorers && scorers.length > 0
@@ -2743,15 +2799,15 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
                 <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800 }}>{sc.goals}</span>
               </div>; })}
           </div>
-        : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{scorers === null ? t.loading : "—"}</div>)}
+        : (scorers === null ? <SkeletonRows rows={6} card={false} /> : <div style={{ textAlign: "center", padding: "26px 0", color: COLORS.textMuted, fontSize: 13 }}>—</div>))}
 
-      {tab === "fixtures" && (matchesLoading ? <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textSecondary, fontSize: 14 }}>{t.loading}</div>
+      {tab === "fixtures" && (matchesLoading ? <SkeletonRows rows={5} />
         : upcoming.length > 0 ? groupedList(upcoming, true)
-        : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>)}
+        : <EmptyState icon={<EmptyIcon name="ball" />} title={t.noMatches} />)}
 
-      {tab === "past" && (matchesLoading ? <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textSecondary, fontSize: 14 }}>{t.loading}</div>
+      {tab === "past" && (matchesLoading ? <SkeletonRows rows={5} />
         : past.length > 0 ? groupedList(past, false)
-        : <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noMatches}</div>)}
+        : <EmptyState icon={<EmptyIcon name="ball" />} title={t.noMatches} />)}
     </SlidePanel>
   </div>;
 }
@@ -2759,24 +2815,23 @@ function LeagueDetailPanel({ league, matches, matchesLoading, t, onOpenMatch, on
 // "Standouts of the day" campaign card (left column): 3 top-rated players, tap to rate them.
 function StandoutsBox({ players, t, onOpen }) {
   if (!players || players.length === 0) return null;
-  return <div onClick={onOpen} style={{ marginTop: 16, cursor: "pointer", borderRadius: 22,
-    background: "linear-gradient(155deg, " + COLORS.purpleDim + ", " + COLORS.accentDim + ")",
-    border: "none", padding: "15px 15px 17px", boxShadow: "0 2px 14px rgba(20,40,40,0.06)",
-    WebkitTapHighlightColor: "transparent" }}>
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 13 }}>
-      <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>{t.standoutsTitle}</span>
+  return <div onClick={onOpen} style={{ marginTop: 16, cursor: "pointer", borderRadius: 18,
+    background: COLORS.card, padding: "14px 14px 16px", WebkitTapHighlightColor: "transparent" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.accent, flexShrink: 0 }} />
+      <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 800 }}>{t.standoutsTitle}</span>
+      <span style={{ marginLeft: "auto", color: COLORS.textMuted, fontSize: 16, fontWeight: 700 }}>›</span>
     </div>
     <div style={{ display: "flex", gap: 8 }}>
       {players.map(function(p, i){
-        return <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", background: COLORS.card, borderRadius: 16,
-          border: "none", padding: "12px 6px" }}>
-          {p.photo ? <img src={p.photo} alt="" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid " + COLORS.accent }} />
-            : <span style={{ width: 48, height: 48, borderRadius: "50%", background: COLORS.cardAlt, display: "inline-block" }} />}
+        return <div key={i} style={{ flex: 1, minWidth: 0, textAlign: "center", background: COLORS.cardAlt, borderRadius: 14, padding: "12px 6px 11px" }}>
+          {p.photo ? <img src={p.photo} alt="" style={{ width: 46, height: 46, borderRadius: "50%", objectFit: "cover" }} />
+            : <span style={{ width: 46, height: 46, borderRadius: "50%", background: COLORS.card, display: "inline-block" }} />}
           <div style={{ color: COLORS.textPrimary, fontSize: 12, fontWeight: 700, marginTop: 7,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-          <div style={{ color: COLORS.textMuted, fontSize: 10, marginBottom: 7,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(p.name)}</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 10, marginBottom: 8,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(p.team, t)}</div>
-          <RatingBadge rating={p.rating} style={{ fontSize: 12, padding: "2px 7px" }} />
+          <RatingBadge rating={p.rating} style={{ fontSize: 13, padding: "2px 8px", borderRadius: 7 }} />
         </div>;
       })}
     </div>
@@ -2850,6 +2905,491 @@ function HaftaninTakimi({ season, t, onOpenPlayer }) {
   </div>;
 }
 
+// ── The Match Log (the spine) ────────────────────────────────────────────────
+// Style tags = "the paint": each is a labelled vote nudging the Taste Graph.
+// vec: est = pragmatik(-1) ↔ estetik(+1); rol = işçi/defansif(-1) ↔ şovmen/hücum(+1).
+var STYLE_TAGS = [
+  { id: "savunma",  label: "Savunma dersi",        vec: { est: -0.8, rol: -0.7 } },
+  { id: "golduello", label: "Gol düellosu",        vec: { est: 0.8,  rol: 0.6 } },
+  { id: "ortasaha", label: "Orta saha savaşı",     vec: { est: -0.3, rol: -0.3 } },
+  { id: "bireysel", label: "Bireysel sınıf",       vec: { est: 0.6,  rol: 0.7 } },
+  { id: "taktik",   label: "Taktik satranç",       vec: { est: -0.6, rol: -0.1 } },
+  { id: "tempo",    label: "Tempo & kaos",         vec: { est: 0.5,  rol: 0.4 } },
+  { id: "karakter", label: "Karakter & dönüş",     vec: { est: 0.3,  rol: 0.1 } },
+  { id: "hakem",    label: "Hakem tartışması",     vec: { est: 0.0,  rol: 0.0 } },
+];
+// Short verdict word for a 0-10 match rating (the match uses the same 0-10 slider as players).
+function matchWord(v){
+  if (v <= 0) return "İzleme keyfi";
+  if (v < 4) return "Kötü maç";
+  if (v < 5.5) return "Vasat";
+  if (v < 6.5) return "İdare eder";
+  if (v < 7.5) return "İyi maçtı";
+  if (v < 8.5) return "Harikaydı";
+  return "Efsane maç";
+}
+
+// The atomic post-match action: rate the watch (stars) + tag why (paint) + rate 3 players
+// (≥1 from each side). Saving stamps a diary row and feeds the Taste Graph.
+function MatchLogSheet({ match, lineups, existing, t, onClose, onSaved, onDeleted }) {
+  var [visible, setVisible] = useState(false);
+  var drag = useSheetDrag(function(){ doClose(); });
+  var [rating, setRating] = useState(existing && existing.rating != null ? Number(existing.rating) : 3.0);
+  var [rated, setRated] = useState(!!(existing && existing.rating != null)); // must rate the match before saving
+  var [tags, setTags] = useState(existing && Array.isArray(existing.tags) ? existing.tags.slice() : []);
+  var [sel, setSel] = useState([]);      // [{ id, name, photo, side, val }]
+  var [side, setSide] = useState("home");
+  var [edit, setEdit] = useState(null);  // player being rated in the pitch editor
+  var [saving, setSaving] = useState(false);
+  var [err, setErr] = useState(null);
+  useEffect(function(){
+    var id = requestAnimationFrame(function(){ setVisible(true); });
+    var prev = document.body.style.overflow; document.body.style.overflow = "hidden"; // lock background scroll
+    return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
+  }, []);
+  function doClose(){ setVisible(false); setTimeout(onClose, 300); }
+
+  function toggleTag(id){ setTags(function(c){ return c.indexOf(id) >= 0 ? c.filter(function(x){ return x !== id; }) : (c.length >= 3 ? c : c.concat(id)); }); }
+  function upsertPlayer(p, val){
+    setSel(function(c){
+      var i = c.findIndex(function(x){ return String(x.id) === String(p.id); });
+      if (i >= 0) { var n = c.slice(); n[i] = Object.assign({}, n[i], { val: val }); return n; }
+      if (c.length >= 3) return c;
+      return c.concat({ id: p.id, name: p.name, photo: p.photo, side: p.side, pos: p.pos, val: val });
+    });
+  }
+  function removePlayer(id){ setSel(function(c){ return c.filter(function(x){ return String(x.id) !== String(id); }); }); }
+  var homeSel = sel.filter(function(p){ return p.side === "home"; }).length;
+  var awaySel = sel.filter(function(p){ return p.side === "away"; }).length;
+  var hasLineups = !!(lineups && ((lineups.home && lineups.home.starting && lineups.home.starting.length) || (lineups.away && lineups.away.starting && lineups.away.starting.length)));
+  // players are optional; the only rule is you can't end up 3 from one team (3-0)
+  function blockedThird(pl){
+    if (sel.some(function(x){ return String(x.id) === String(pl.id); })) return false;
+    if (sel.length >= 3) return true;
+    if (sel.length === 2 && homeSel === 2 && pl.side === "home") return true;
+    if (sel.length === 2 && awaySel === 2 && pl.side === "away") return true;
+    return false;
+  }
+  function openEditor(pl){
+    if (blockedThird(pl)) return;
+    var ex = sel.filter(function(x){ return String(x.id) === String(pl.id); })[0];
+    setEdit({ id: pl.id, name: pl.name, photo: pl.photo, side: side, pos: pl.position || null, cur: ex ? ex.val : null });
+  }
+  var canSave = rated && !saving; // must rate the match itself first; players optional
+  function del(){
+    if (saving) return; setSaving(true); setErr(null);
+    deleteMatchLog(match.id).then(function(res){
+      setSaving(false);
+      if (res && res.error) { setErr("Silinemedi — tekrar dene."); return; }
+      if (onDeleted) onDeleted();
+      doClose();
+    }).catch(function(){ setSaving(false); setErr("Silinemedi — tekrar dene."); });
+  }
+
+  function save(){
+    if (!canSave) return; setSaving(true); setErr(null);
+    // save the MATCH log first — player ratings must never be orphaned without a logged match
+    saveMatchLog({ matchId: match.id, rating: rating, tags: tags, home: match.home, away: match.away,
+      league: match.league, matchTs: match.ts ? new Date(match.ts).toISOString() : null,
+      players: sel.map(function(p){ return { pos: p.pos || null, rating: p.val, side: p.side }; }) })
+      .then(function(res){
+        if (res && res.error) return Promise.reject(res.error);
+        return Promise.all(sel.map(function(p){ return saveRating({ targetType: "player", targetId: p.id, matchId: match.id, targetName: p.name, sport: "football", rating: p.val }); }));
+      })
+      .then(function(){ setSaving(false); if (onSaved) onSaved({ rating: rating, tags: tags }); doClose(); })
+      .catch(function(){ setSaving(false); setErr("Kaydedilemedi — tekrar dene."); });
+  }
+
+  // active side's pitch data (tap a player → rating editor; selected players show a rating badge)
+  var sideLu = (lineups && lineups[side]) || { starting: [] };
+  var clickMap = {}; (sideLu.starting || []).forEach(function(pl){ clickMap[pl.id] = pl; });
+  var badgeMap = {}; sel.forEach(function(r){ if (r.side === side) badgeMap[r.id] = r.val; });
+
+  var head = { color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, marginBottom: 10, letterSpacing: "-0.01em" };
+
+  if (typeof document === "undefined") return null;
+  // portal to <body> so position:fixed + backdrop blur cover the WHOLE viewport (the match modal uses transform)
+  return createPortal(<><div onClick={doClose}
+    onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
+    style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(0,0,0,0.42)",
+    backdropFilter: "blur(9px)", WebkitBackdropFilter: "blur(9px)",
+    display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
+    {/* match identity ABOVE the sheet, on the blurred backdrop (Letterboxd style) */}
+    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6, maxWidth: "100%" }}>
+        <TeamLogo src={match.homeLogo} name={match.home} size={22} />
+        <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{locTeam(match.home, t)}</span>
+        <span style={{ color: "#fff", fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", flexShrink: 0, padding: "0 2px" }}>{match.score || "-"}</span>
+        <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{locTeam(match.away, t)}</span>
+        <TeamLogo src={match.awayLogo} name={match.away} size={22} />
+      </div>
+      {match.date && <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: 700 }}>{match.date}</div>}
+    </div>
+    <div onClick={function(e){ e.stopPropagation(); }}
+      onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
+      style={{ width: "100%", maxWidth: 440, maxHeight: "74vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
+        borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border,
+        boxShadow: "0 -8px 40px rgba(20,40,40,0.28)", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+        transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
+        transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
+      <div style={{ padding: "10px 18px 0" }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 10px" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <span style={{ color: COLORS.textPrimary, fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" }}>Logla</span>
+          <button onClick={doClose} aria-label="kapat" className="mo-xbtn" style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid " + COLORS.border,
+            background: "transparent", color: COLORS.textSecondary, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding: "0 18px max(24px, env(safe-area-inset-bottom))" }}>
+        {/* 1 — rate the match (same 0-10 slider as players) */}
+        <div style={{ marginBottom: 22 }}>
+          <div style={head}>Maçı puanla</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, minWidth: 46, color: rated ? COLORS.accent : COLORS.textMuted }}>{rating.toFixed(1)}</span>
+            <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 700 }}>{rated ? matchWord(rating) : "önce maçı puanla"}</span>
+          </div>
+          <RatingSlider value={rating} onChange={function(v){ setRating(v); setRated(true); }} />
+        </div>
+
+        {/* 2 — style tags (the paint) */}
+        <div style={{ marginBottom: 22 }}>
+          <div style={head}>Ne öne çıktı?</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {STYLE_TAGS.map(function(tg){
+              var on = tags.indexOf(tg.id) >= 0, dis = !on && tags.length >= 3;
+              return <button key={tg.id} onClick={function(){ toggleTag(tg.id); }} className={on ? undefined : "mo-lgchip"}
+                style={{ padding: "7px 13px", borderRadius: 11, cursor: dis ? "default" : "pointer", fontFamily: FONT,
+                  border: "1px solid " + (on ? COLORS.accent : COLORS.border), background: on ? COLORS.accentDim : "transparent",
+                  color: on ? COLORS.accent : (dis ? COLORS.textMuted : COLORS.textSecondary), fontSize: 12.5, fontWeight: on ? 800 : 600,
+                  opacity: dis ? 0.5 : 1, WebkitTapHighlightColor: "transparent" }}>{tg.label}</button>;
+            })}
+          </div>
+        </div>
+
+        {/* 3 — three players on the pitch (≥1 per side; tap a player to rate, like the coupon) */}
+        {hasLineups && <div style={{ marginBottom: 20 }}>
+          <div style={head}>Oyuncu puanla</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {[{ id: "home", label: locTeam(match.home, t), n: homeSel }, { id: "away", label: locTeam(match.away, t), n: awaySel }].map(function(sd){
+              var a = side === sd.id;
+              return <button key={sd.id} onClick={function(){ setSide(sd.id); }} style={{ flex: 1, minWidth: 0, padding: "7px 8px", borderRadius: 10, cursor: "pointer", fontFamily: FONT,
+                border: "1px solid " + (a ? COLORS.accent : COLORS.border), background: a ? COLORS.accentDim : "transparent", color: a ? COLORS.accent : COLORS.textSecondary,
+                fontSize: 12, fontWeight: a ? 800 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", WebkitTapHighlightColor: "transparent" }}>{sd.label}{sd.n > 0 ? " · " + sd.n : ""}</button>;
+            })}
+          </div>
+          <Pitch lineup={sideLu} flip={true} label={side === "home" ? locTeam(match.home, t) : locTeam(match.away, t)} color={null}
+            players={clickMap} ratings={badgeMap} onPlayerClick={function(pl){ openEditor(pl); }} />
+          <div style={{ color: COLORS.textMuted, fontSize: 11, textAlign: "center", marginTop: 6 }}>Puan vermek için oyuncuya dokun</div>
+          {sel.length > 0 && <div style={{ marginTop: 12 }}>
+            {sel.map(function(r){
+              return <div key={r.id} onClick={function(){ setEdit({ id: r.id, name: r.name, photo: r.photo, side: r.side, cur: r.val }); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 4px", borderBottom: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                <PredHead photo={r.photo} size={26} />
+                <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                <span style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{r.side === "home" ? locTeam(match.home, t) : locTeam(match.away, t)}</span>
+                <span style={{ marginLeft: "auto", color: ratingColor(r.val), fontSize: 14, fontWeight: 800 }}>{r.val.toFixed(1)}</span>
+                <button onClick={function(e){ e.stopPropagation(); removePlayer(r.id); }} aria-label="kaldır" style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2 }}>×</button>
+              </div>;
+            })}
+          </div>}
+          {sel.length === 2 && (homeSel === 2 || awaySel === 2) && <div style={{ color: COLORS.textMuted, fontSize: 11.5, marginTop: 10 }}>
+            3. oyuncuyu {homeSel === 2 ? locTeam(match.away, t) : locTeam(match.home, t)} takımından seç · 3-0 olmaz</div>}
+        </div>}
+
+        <button onClick={save} disabled={!canSave} style={{ width: "100%", marginTop: 6, padding: 14, borderRadius: 14, border: "none",
+          background: canSave ? COLORS.accent : COLORS.cardAlt, color: canSave ? "#fff" : COLORS.textMuted, fontSize: 15, fontWeight: 800,
+          cursor: canSave ? "pointer" : "default", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+          {saving ? "Kaydediliyor…" : "Kaydet"}</button>
+        {existing && <button onClick={del} disabled={saving} style={{ width: "100%", marginTop: 10, padding: 11, borderRadius: 12,
+          border: "1px solid " + COLORS.red + "55", background: "transparent", color: COLORS.red, fontSize: 13, fontWeight: 800,
+          cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Logu sil</button>}
+        {err && <div style={{ color: COLORS.red, fontSize: 12, fontWeight: 700, textAlign: "center", marginTop: 8 }}>{err}</div>}
+      </div>
+    </div>
+  </div>
+  {edit && <PredRatingSheet player={{ id: edit.id, name: edit.name, photo: edit.photo }} initial={edit.cur != null ? edit.cur : 3.0} existing={edit.cur != null} t={t}
+    onSave={function(v){ upsertPlayer({ id: edit.id, name: edit.name, photo: edit.photo, side: edit.side, pos: edit.pos }, v); setEdit(null); }}
+    onRemove={function(){ removePlayer(edit.id); setEdit(null); }}
+    onClose={function(){ setEdit(null); }} />}
+  </>, document.body);
+}
+
+// Community rating distribution for a finished match: Letterboxd-style histogram.
+// Desktop: hover a bar. Mobile: press-and-hold and slide left/right to read the buckets.
+// Faded-purple bars (not a colour ramp). Placeholder fake distribution until real aggregates land.
+function MatchRatingDist({ match, action }) {
+  var [active, setActive] = useState(null);
+  var barsRef = useRef(null);
+  var seed = 2166136261; var s = String(match.id || (match.home + match.away) || "x");
+  for (var i = 0; i < s.length; i++) { seed ^= s.charCodeAt(i); seed = (seed * 16777619) >>> 0; }
+  function rnd(){ seed = (seed * 1103515245 + 12345) >>> 0; return (seed & 0x7fffffff) / 0x7fffffff; }
+  var NB = 10, peak = 5.6 + rnd() * 2.8, spread = 1.15 + rnd() * 0.95, counts = [], total = 0;
+  for (var b = 0; b < NB; b++) { var xc = b + 0.5; var base = Math.exp(-Math.pow(xc - peak, 2) / (2 * spread * spread)); var c = Math.round(base * (2600 + rnd() * 9000)); if (xc < 3) c = Math.round(c * 0.12); counts.push(c); total += c; }
+  var maxC = counts.reduce(function(m, c){ return Math.max(m, c); }, 1);
+  var wsum = 0; counts.forEach(function(c, b){ wsum += c * (b + 0.5); });
+  var avg = total ? wsum / total : 0;
+  var fmt = function(n){ return n >= 1000 ? (Math.round(n / 100) / 10).toFixed(1).replace(/\.0$/, "") + "B" : String(n); };
+  // light purple at rest (can't hex-append alpha to a CSS var — use color-mix), full accent when active
+  var BASE = "color-mix(in srgb, " + COLORS.accent + " 62%, transparent)";
+  function idxFromX(clientX){ var el = barsRef.current; if (!el) return null; var r = el.getBoundingClientRect(); var i = Math.floor((clientX - r.left) / r.width * NB); return Math.max(0, Math.min(NB - 1, i)); }
+  function touchSet(e){ e.stopPropagation(); if (e.touches && e.touches[0]) setActive(idxFromX(e.touches[0].clientX)); }
+  return <div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+        <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>Topluluk puanı</span>
+        <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: COLORS.accent }}>{avg.toFixed(1)}</span>
+      </div>
+      {action}
+    </div>
+    {/* info box — reveals on hover (desktop) / press-hold (mobile) */}
+    <div style={{ minHeight: 16, marginBottom: 5 }}>
+      {active != null
+        ? <span style={{ fontSize: 11.5, fontWeight: 800, color: COLORS.accent }}>{active}–{active + 1} arası · {fmt(counts[active])} kişi <span style={{ color: COLORS.textMuted, fontWeight: 700 }}>(%{total ? Math.round(counts[active] / total * 100) : 0})</span></span>
+        : <span style={{ fontSize: 11.5, fontWeight: 700, color: COLORS.textMuted }}>{fmt(total)} oy</span>}
+    </div>
+    <div ref={barsRef} style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 34, touchAction: "none" }}
+      onMouseLeave={function(){ setActive(null); }}
+      onTouchStart={touchSet} onTouchMove={touchSet}
+      onTouchEnd={function(e){ e.stopPropagation(); setActive(null); }}>
+      {counts.map(function(c, b){
+        var on = active === b;
+        var col = on ? COLORS.accent : BASE; // only the active bar pops; the rest keep their colour
+        return <div key={b} onMouseEnter={function(){ setActive(b); }}
+          style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+          <div style={{ width: "100%", height: Math.max(3, c / maxC * 34), borderRadius: 3, background: col, transition: "background 0.15s ease" }} />
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+// Post-match entry point shown at the top of a finished match: the log CTA or the user's log summary.
+function MatchLogCard({ match, lineups, t }) {
+  var [log, setLog] = useState(undefined); // undefined = loading, null = none, obj = exists
+  var [open, setOpen] = useState(false);
+  var [uid, setUid] = useState(null);
+  useEffect(function(){
+    var c = false;
+    getUserId().then(function(id){
+      if (c) return;
+      setUid(id || null);
+      if (!id) { setLog(null); return; }
+      fetchMyMatchLog(match.id).then(function(l){ if (!c) setLog(l); }).catch(function(){ if (!c) setLog(null); });
+    }).catch(function(){ if (!c) setLog(null); });
+    return function(){ c = true; };
+  }, [match.id]);
+  var tagLabel = function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; };
+
+  function launch(){ if (!uid) { if (FAV.onNeedLogin) FAV.onNeedLogin(); return; } setOpen(true); }
+
+  var hasLog = log && log.rating != null;
+  var action = hasLog
+    ? <button onClick={launch} style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999,
+        border: "1px solid " + COLORS.accent, background: COLORS.accentDim, color: COLORS.accent, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+        Sen {Number(log.rating).toFixed(1)}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+      </button>
+    : <button onClick={launch} style={{ flexShrink: 0, padding: "8px 15px", borderRadius: 12, border: "none", background: COLORS.accent,
+        color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Logla</button>;
+  return <div style={{ marginBottom: 14, background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 16, padding: "12px 15px" }}>
+    <MatchRatingDist match={match} action={action} />
+    {open && <MatchLogSheet match={match} lineups={lineups} existing={log} t={t}
+      onClose={function(){ setOpen(false); }}
+      onSaved={function(res){ setLog(Object.assign({}, log || {}, { rating: res.rating, tags: res.tags })); }}
+      onDeleted={function(){ setLog(null); }} />}
+  </div>;
+}
+
+// Ratings tab: everyone's match ratings for this match; tap a row for that user's full log detail.
+function MatchRatingsTab({ match, t }) {
+  var [logs, setLogs] = useState(null);
+  var [view, setView] = useState(null);
+  var [uid, setUid] = useState(null);
+  useEffect(function(){
+    var c = false;
+    getUserId().then(function(id){ if (!c) setUid(id || null); }).catch(function(){});
+    fetchMatchLogs(match.id).then(function(l){ if (!c) setLogs(l || []); }).catch(function(){ if (!c) setLogs([]); });
+    return function(){ c = true; };
+  }, [match.id]);
+  if (logs === null) return <div style={{ padding: "12px 2px" }}><SkeletonRows rows={4} card={false} /></div>;
+  if (logs.length === 0) return <EmptyState icon={<EmptyIcon name="ball" />} title="Henüz puan yok" hint="Bu maçı ilk loglayan sen ol — üstteki Logla ile." />;
+  var avg = logs.reduce(function(s, l){ return s + l.rating; }, 0) / logs.length;
+  return <div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px 12px" }}>
+      <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>{logs.length} kişi puanladı</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>ort.</span>
+        <span style={{ color: COLORS.accent, fontSize: 16, fontWeight: 800 }}>{avg.toFixed(1)}</span>
+      </span>
+    </div>
+    {logs.map(function(l){
+      var me = uid && String(l.userId) === String(uid);
+      return <div key={l.userId} onClick={function(){ setView(l); }} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 8px",
+        borderBottom: "1px solid " + COLORS.border, cursor: "pointer", background: me ? COLORS.accentDim : "transparent", WebkitTapHighlightColor: "transparent" }}>
+        <span style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 14, fontWeight: 800 }}>{(l.user || "?")[0].toUpperCase()}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {me ? "@" + l.user + " (sen)" : <UserLink userId={l.userId} username={l.user} t={t} style={{ color: COLORS.textPrimary, fontWeight: 700 }} />}</div>
+          {l.tags && l.tags.length > 0 && <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; }).join(" · ")}</div>}
+        </div>
+        <span style={{ color: COLORS.accent, fontSize: 16, fontWeight: 800, flexShrink: 0 }}>{l.rating.toFixed(1)}</span>
+        <span style={{ color: COLORS.textMuted, flexShrink: 0, fontSize: 16 }}>›</span>
+      </div>;
+    })}
+    {view && <RatingDetailSheet match={match} log={view} t={t} onClose={function(){ setView(null); }} />}
+  </div>;
+}
+
+// Small bottom sheet: one user's full log — match rating (purple) + player ratings (green/yellow/red).
+function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
+  var [visible, setVisible] = useState(false);
+  var [players, setPlayers] = useState(null);
+  var [deleting, setDeleting] = useState(false);
+  useEffect(function(){
+    var id = requestAnimationFrame(function(){ setVisible(true); });
+    var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    fetchUserMatchRatings(match.id, log.userId).then(function(p){ setPlayers(p || []); }).catch(function(){ setPlayers([]); });
+    return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
+  }, []);
+  function close(){ setVisible(false); setTimeout(onClose, 280); }
+  if (typeof document === "undefined") return null;
+  return createPortal(<div onClick={close}
+    onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
+    style={{ position: "fixed", inset: 0, zIndex: 1370, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
+    <div onClick={function(e){ e.stopPropagation(); }} style={{ width: "100%", maxWidth: 440, maxHeight: "80vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
+      borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
+      transform: visible ? "translateY(0)" : "translateY(100%)", transition: "transform 0.32s cubic-bezier(0.22,1,0.36,1)",
+      padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
+      <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ color: COLORS.textPrimary, fontSize: 15, fontWeight: 800 }}>{log.own ? "Senin logun" : "@" + log.user}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>maç</span>
+          <span style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800 }}>{log.rating.toFixed(1)}</span>
+        </div>
+      </div>
+      {(match.home || match.away) && <div style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{locTeam(match.home, t)} - {locTeam(match.away, t)}</div>}
+      {log.tags && log.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+        {log.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{f ? f.label : id}</span>; })}
+      </div>}
+      <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 8 }}>Oyuncu ratingleri</div>
+      {players === null
+        ? <SkeletonRows rows={3} card={false} />
+        : players.length === 0
+          ? <div style={{ color: COLORS.textMuted, fontSize: 12.5, padding: "8px 2px" }}>Bu logda oyuncu puanı yok.</div>
+          : players.map(function(p){
+              return <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 2px", borderBottom: "1px solid " + COLORS.border }}>
+                <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                <RatingBadge rating={p.rating} />
+              </div>;
+            })}
+      {onDelete && <button onClick={function(){ if (deleting) return; setDeleting(true); Promise.resolve(onDelete()).then(function(){ close(); }).catch(function(){ setDeleting(false); }); }}
+        disabled={deleting} style={{ width: "100%", marginTop: 18, padding: 11, borderRadius: 12, border: "1px solid " + COLORS.red + "55",
+        background: "transparent", color: COLORS.red, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+        {deleting ? "Siliniyor…" : "Logu sil"}</button>}
+    </div>
+  </div>, document.body);
+}
+
+// Clickable @username → opens that user's public profile. stopPropagation so it doesn't also fire
+// the row/card's own onClick (open match). No user_id → renders as plain (non-clickable) text.
+function UserLink({ userId, username, t, style }) {
+  var [open, setOpen] = useState(false);
+  var nm = username || "kullanıcı";
+  if (!userId) return <span style={style}>@{nm}</span>;
+  return <>
+    <span onClick={function(e){ e.stopPropagation(); setOpen(true); }} style={Object.assign({ cursor: "pointer" }, style || {})}>@{nm}</span>
+    {open && <UserProfileSheet userId={userId} username={nm} t={t} onClose={function(){ setOpen(false); }} />}
+  </>;
+}
+
+// Public profile of another user: their Taste Graph + logs + comments. Bottom sheet.
+function UserProfileSheet({ userId, username, t, onClose }) {
+  var [visible, setVisible] = useState(false);
+  var [logs, setLogs] = useState(null);
+  var [comments, setComments] = useState(null);
+  var [tab, setTab] = useState("logs");
+  var [logView, setLogView] = useState(null);
+  var lang = (t && t._lang) || "tr";
+  useEffect(function(){
+    var id = requestAnimationFrame(function(){ setVisible(true); });
+    var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    fetchUserLogs(userId, 60).then(function(l){ setLogs(l || []); }).catch(function(){ setLogs([]); });
+    fetchUserComments(userId, 40).then(function(cs){ setComments(cs || []); }).catch(function(){ setComments([]); });
+    return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
+  }, [userId]);
+  function close(){ setVisible(false); setTimeout(onClose, 280); }
+  function stopP(e){ e.stopPropagation(); }
+  if (typeof document === "undefined") return null;
+  var initial = (username || "?")[0].toUpperCase();
+  var tagLbl = function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; };
+  var box = { padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border };
+  return createPortal(<><div onClick={close} onTouchStart={stopP} onTouchMove={stopP} onTouchEnd={stopP}
+    style={{ position: "fixed", inset: 0, zIndex: 1360, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
+    <div onClick={stopP} style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: COLORS.bg, fontFamily: FONT,
+      borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
+      transform: visible ? "translateY(0)" : "translateY(100%)", transition: "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
+      <div style={{ padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
+          <div style={{ width: 52, height: 52, borderRadius: 18, flexShrink: 0, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, color: "#fff" }}>{initial}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>@{username}</div>
+            <div style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700, marginTop: 2 }}>{logs === null ? "…" : logs.length} log</div>
+          </div>
+          <button onClick={close} aria-label="kapat" className="mo-xbtn" style={{ width: 32, height: 32, borderRadius: 999, border: "1px solid " + COLORS.border,
+            background: "transparent", color: COLORS.textSecondary, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, WebkitTapHighlightColor: "transparent" }}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Taste Graph</div>
+          <FootballDNA t={t} userId={userId} />
+        </div>
+        <UnderlineTabs indicatorColor={COLORS.accent} active={tab} onChange={setTab}
+          tabs={[{ id: "logs", label: "Loglar" }, { id: "comments", label: "Yorumlar" }]} />
+        <div style={{ marginTop: 12 }}>
+          {tab === "logs"
+            ? (logs === null ? <SkeletonRows rows={3} card={false} />
+                : logs.length > 0
+                  ? logs.map(function(g){
+                      return <div key={g.id} onClick={function(){ setLogView(g); }} style={Object.assign({ cursor: "pointer", WebkitTapHighlightColor: "transparent" }, box)}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: (g.tags && g.tags.length) ? 8 : 0 }}>
+                          <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.home, t)} - {locTeam(g.away, t)}</span>
+                          <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{Number(g.rating).toFixed(1)}</span>
+                        </div>
+                        {g.tags && g.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {g.tags.map(function(id){ return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{tagLbl(id)}</span>; })}
+                        </div>}
+                      </div>; })
+                  : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok.</div>)
+            : (comments === null ? <SkeletonRows rows={3} card={false} />
+                : comments.length > 0
+                  ? comments.map(function(cm){
+                      var ctx = cm.match_name || cm.target_name || "";
+                      return <div key={cm.id} style={box}>
+                        <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.45, marginBottom: ctx ? 7 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{cm.body}</div>
+                        {ctx && <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: COLORS.textMuted }}>
+                          <span style={{ fontWeight: 800, color: COLORS.accent }}>{cm.target_type === "player" ? t.playerTag : t.matchTag}</span>
+                          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{ctx}</span>
+                          <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(cm.created_at, lang)}</span>
+                        </div>}
+                      </div>; })
+                  : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz yorum yok.</div>)}
+        </div>
+      </div>
+    </div>
+  </div>
+  {logView && <RatingDetailSheet match={{ id: logView.match_id, home: logView.home, away: logView.away }}
+    log={{ userId: userId, own: false, user: username, rating: Number(logView.rating), tags: logView.tags }}
+    t={t} onClose={function(){ setLogView(null); }} />}
+  </>, document.body);
+}
+
 // Rate the 3 standouts side by side (sliders). Bottom sheet, mock/local.
 // Player-detail bottom sheet for predicting a player's match rating (opens from the coupon pitch).
 function PredRatingSheet({ player, initial, existing, t, onSave, onRemove, onClose }) {
@@ -2890,7 +3430,7 @@ function PredRatingSheet({ player, initial, existing, t, onSave, onRemove, onClo
         {existing && <button onClick={remove} style={{ padding: "12px 18px", borderRadius: 13, border: "1px solid " + COLORS.border,
           background: "transparent", color: COLORS.textSecondary, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kaldır</button>}
         <button onClick={save} style={{ marginLeft: "auto", flex: existing ? "0 0 auto" : 1, padding: "12px 22px", borderRadius: 13, border: "none",
-          background: COLORS.accent, boxShadow: "none", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kaydet</button>
+          background: COLORS.accent, color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kaydet</button>
       </div>
     </div>
   </div>, document.body);
@@ -2986,7 +3526,7 @@ function DayMatchList({ matches, t, isF1, onOpen }) {
   matches = matches || [];
   var live = matches.filter(function(m){ return m.status === "live"; });
   var [tab, setTab] = useState("upcoming"); // "live" | "upcoming" | "finished"
-  if (matches.length === 0) return <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.noMatches}</div>;
+  if (matches.length === 0) return <EmptyState icon={<EmptyIcon name="ball" />} title={t.noMatches} hint="Başka bir güne veya lige göz at — yakında yeni maçlar burada." />;
 
   var todayKey = isoLocal(new Date());
   function dayHeader(k){ return k === todayKey ? t.todayLabel : (k.slice(8, 10) + "." + k.slice(5, 7) + "." + k.slice(0, 4)); }
@@ -3097,16 +3637,16 @@ function LeagueStrip({ groups, selectedId, onSelect, onClear, t }) {
     var pa = PRIORITY[a.l.id] || 999, pb = PRIORITY[b.l.id] || 999;
     return pa !== pb ? pa - pb : a.i - b.i;
   }).map(function(x){ return x.l; });
-  function chip(active, glow){ return { flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 12,
-    border: "none",
-    background: glow ? ("linear-gradient(105deg, " + glow + "3a 0%, " + glow + "14 34%, transparent 74%), " + (active ? COLORS.accentDim : COLORS.card)) : (active ? COLORS.accentDim : COLORS.card),
-    color: active ? COLORS.textPrimary : COLORS.textSecondary, fontSize: 12, fontWeight: active ? 800 : 600, cursor: "pointer",
+  function chip(active){ return { flexShrink: 0, display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 11,
+    border: "1px solid " + (active ? COLORS.accent : COLORS.border),
+    background: active ? COLORS.accentDim : "transparent",
+    color: active ? COLORS.accent : COLORS.textSecondary, fontSize: 12, fontWeight: active ? 800 : 600, cursor: "pointer",
     fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }; }
   return <div className="mo-scroll" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 12 }}>
-    <button onClick={onClear} style={chip(!selectedId, !selectedId ? "#8A2BE2" : null)}>{t.allLabel}</button>
+    <button onClick={onClear} className="mo-lgchip" style={chip(!selectedId)}>{t.allLabel}</button>
     {leagues.map(function(l){
       var a = selectedId === l.id;
-      return <button key={l.id} onClick={function(){ onSelect(l); }} style={chip(a, l.id === 203 ? "#1683E0" : LEAGUE_GLOW[l.id])}>
+      return <button key={l.id} onClick={function(){ onSelect(l); }} className="mo-lgchip" style={chip(a)}>
         {leagueLogo(l.id, l.logo) && <img src={leagueLogo(l.id, l.logo)} onError={logoFallback(l.logo)} alt="" style={{ width: 16, height: 16, objectFit: "contain", flexShrink: 0 }} />}
         <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</span>
       </button>; })}
@@ -3149,7 +3689,7 @@ function MatchRow({ match, isF1, onOpen, t, divider, showDate, showLeague }) {
         </div>
       </div>}
     <Quick1x2 match={match} layout="card" />
-    <PredCount match={match} />
+    {match.status === "finished" ? <RatingCount match={match} /> : <PredCount match={match} />}
   </div>
   {divider && <div style={{ height: 1, background: COLORS.border, margin: "0 14px" }} />}
   </>;
@@ -3182,8 +3722,8 @@ function MatchCard({ match, isF1, onOpen, t }) {
 
   return <div style={{ background: COLORS.card, borderRadius: 24, overflow: "hidden", marginBottom: 12,
     WebkitTransform: "translateZ(0)", transform: "translateZ(0)",
-    border: "1px solid " + border, boxShadow: "0 2px 14px rgba(20,40,40,0.05)",
-    transition: "border-color 0.4s ease, box-shadow 0.4s ease" }}>
+    border: "1px solid " + border,
+    transition: "border-color 0.4s ease" }}>
     <div onClick={onOpen}
       onMouseEnter={function(){ setHover(true); }} onMouseLeave={function(){ setHover(false); }}
       style={{ padding: "20px 22px", cursor: "pointer", display: "flex",
@@ -3351,7 +3891,7 @@ function MatchModal({ match, isF1, t, onClose }) {
       width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
       WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y",
       borderTopLeftRadius: 24, borderTopRightRadius: 24,
-      background: "var(--modalGrad)", backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
+      background: "var(--modalGrad)", backdropFilter: "blur(30px) saturate(170%)", WebkitBackdropFilter: "blur(30px) saturate(170%)",
       border: "1px solid var(--modalBorder)", borderBottom: "none",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
@@ -3411,30 +3951,46 @@ function MatchModal({ match, isF1, t, onClose }) {
             return (ev.type === "goal" && ev.detail !== "Missed Penalty") || (ev.type === "card" && ev.detail === "Red Card");
           });
           if (key.length === 0) return null;
-          var homeEv = key.filter(function(e){ return e.side === "home"; });
-          var awayEv = key.filter(function(e){ return e.side === "away"; });
-          function evLine(ev, alignRight){
-            var isGoal = ev.type === "goal";
-            // suffix: penalty (P) / own goal (KG) as text; red card as a small red card icon
-            var isRed = !isGoal; // the summary list contains only goals + red cards
-            var label = null;
-            if (isGoal && ev.detail === "Penalty") label = "P";
-            else if (isGoal && ev.detail === "Own Goal") label = "KG";
-            var labelColor = (ev.detail === "Own Goal") ? COLORS.red : COLORS.accent;
-            return <div style={{ display: "flex", alignItems: "center", gap: 4,
-              justifyContent: alignRight ? "flex-end" : "flex-start", marginBottom: 3 }}>
+          // group goals by scorer so a multi-goal player is ONE line (name + all minutes); reds stay separate
+          function rowsFor(side){
+            var evs = key.filter(function(e){ return e.side === side; });
+            var groups = {}, order = [], reds = [];
+            evs.forEach(function(ev){
+              if (ev.type === "goal") {
+                var k = ev.player || "?";
+                if (!groups[k]) { groups[k] = { player: ev.player, mins: [] }; order.push(k); }
+                groups[k].mins.push({ m: ev.minute, label: ev.detail === "Penalty" ? "P" : (ev.detail === "Own Goal" ? "KG" : null), own: ev.detail === "Own Goal" });
+              } else reds.push(ev);
+            });
+            var rows = order.map(function(k){ return { goal: groups[k] }; });
+            reds.forEach(function(ev){ rows.push({ red: ev }); });
+            return rows;
+          }
+          function minsEl(g){
+            return g.mins.map(function(mm, i){
+              return <span key={i}>{i > 0 ? ", " : ""}<span style={{ color: COLORS.textMuted }}>{mm.m}'</span>{mm.label ? <span style={{ color: mm.own ? COLORS.red : COLORS.accent, fontWeight: 800 }}> ({mm.label})</span> : null}</span>;
+            });
+          }
+          function row(r, alignRight){
+            if (r.goal) {
+              return <div style={{ display: "flex", justifyContent: alignRight ? "flex-end" : "flex-start", marginBottom: 3 }}>
+                <span style={{ color: COLORS.textSecondary, fontSize: 11, textAlign: alignRight ? "right" : "left" }}>
+                  {alignRight ? <>{minsEl(r.goal)} {r.goal.player}</> : <>{r.goal.player} {minsEl(r.goal)}</>}
+                </span></div>;
+            }
+            var ev = r.red;
+            return <div style={{ display: "flex", alignItems: "center", justifyContent: alignRight ? "flex-end" : "flex-start", marginBottom: 3 }}>
               <span style={{ color: COLORS.textSecondary, fontSize: 11, textAlign: alignRight ? "right" : "left" }}>
                 {alignRight && ev.minute != null && <span style={{ color: COLORS.textMuted }}>{ev.minute}' </span>}
                 {ev.player}
-                {label && <span style={{ color: labelColor, fontWeight: 800 }}> ({label})</span>}
-                {isRed && <span aria-label="kırmızı kart" style={{ display: "inline-block", width: 7, height: 10, borderRadius: 2, background: COLORS.red, verticalAlign: "-1px", marginLeft: 4 }} />}
+                <span aria-label="kırmızı kart" style={{ display: "inline-block", width: 7, height: 10, borderRadius: 2, background: COLORS.red, verticalAlign: "-1px", marginLeft: 4 }} />
                 {!alignRight && ev.minute != null && <span style={{ color: COLORS.textMuted }}> {ev.minute}'</span>}
-              </span>
-            </div>;
+              </span></div>;
           }
+          var homeRows = rowsFor("home"), awayRows = rowsFor("away");
           return <div style={{ display: "flex", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(106,69,230,0.18)" }}>
-            <div style={{ flex: 1 }}>{homeEv.map(function(ev, i){ return <div key={i}>{evLine(ev, false)}</div>; })}</div>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>{awayEv.map(function(ev, i){ return <div key={i} style={{ width: "100%" }}>{evLine(ev, true)}</div>; })}</div>
+            <div style={{ flex: 1 }}>{homeRows.map(function(r, i){ return <div key={i}>{row(r, false)}</div>; })}</div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>{awayRows.map(function(r, i){ return <div key={i} style={{ width: "100%" }}>{row(r, true)}</div>; })}</div>
           </div>;
         })()}
       </div>
@@ -3506,7 +4062,7 @@ function SearchDiscovery({ t, onOpenLeague, onOpenTeam, onOpenPlayer }) {
       .then(function(r){ return r.json(); }).then(function(j){ var g = j.standings && j.standings.groups && j.standings.groups[0]; if (!cancelled) setTeams(g && g.rows ? g.rows.slice(0, 5) : []); }).catch(function(){ if (!cancelled) setTeams([]); });
     return function(){ cancelled = true; };
   }, []);
-  var sectionLabel = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", margin: "0 2px 12px" };
+  var sectionLabel = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", margin: "0 2px 12px" };
   var card = { background: COLORS.card, borderRadius: 18, padding: 8 };
   var loadingStyle = { textAlign: "center", padding: "20px 0", color: COLORS.textMuted, fontSize: 13 };
 
@@ -3566,10 +4122,8 @@ function SearchDiscovery({ t, onOpenLeague, onOpenTeam, onOpenPlayer }) {
 
 // Search view: teams + their matches (local + API) + players (API). Replaces the normal list while a query is active.
 function SearchResults({ teams, matches, players, searching, isF1, t, onOpenMatch, onOpenPlayer, onOpenTeam }) {
-  var titleStyle = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
-    letterSpacing: "0.5px", marginBottom: 10 };
-  var box = { background: COLORS.card, borderRadius: 22, border: "none", padding: 8,
-    boxShadow: "0 2px 14px rgba(20,40,40,0.05)" };
+  var titleStyle = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 10 };
+  var box = { background: COLORS.card, borderRadius: 22, border: "1px solid " + COLORS.border, padding: 8 };
   var empty = { color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" };
   var drop = function(delay){ return { animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both", animationDelay: delay }; };
   return <div className="mo-container">
@@ -3913,9 +4467,10 @@ function SimplePage({ title, onBack, t, children }) {
     <div className="mo-sticky" style={{ zIndex: 10, background: COLORS.bg, borderBottom: "1px solid " + COLORS.border,
       paddingTop: "max(20px, env(safe-area-inset-top))" }}>
       <div className="mo-container" style={{ padding: "0 20px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={onBack} aria-label="back" style={{ width: 38, height: 38, borderRadius: 13,
-          background: COLORS.card, border: "none", cursor: "pointer", color: COLORS.textPrimary,
-          fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>‹</button>
+        <button onClick={onBack} aria-label="back" className="mo-xbtn" style={{ width: 38, height: 38, borderRadius: 12,
+          background: COLORS.card, border: "1px solid " + COLORS.border, cursor: "pointer", color: COLORS.textSecondary,
+          display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
         <span style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800 }}>{title}</span>
       </div>
     </div>
@@ -3989,16 +4544,16 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
 
   if (!loggedIn) return <SimplePage title={t.navPredictions} onBack={onBack} t={t}>
     <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>Tahmin yap, tuttukça itibar puanı kazan.
-      <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, boxShadow: "none", color: "#fff",
+      <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, color: "#fff",
         border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
     </div>
   </SimplePage>;
 
-  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 8px" };
+  var label = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", margin: "18px 2px 8px" };
   function chip(id, text){
     var on = scope === id;
-    return <button key={id} onClick={function(){ setScope(id); }} style={{ flexShrink: 0, padding: "7px 13px", borderRadius: 11, cursor: "pointer", fontFamily: FONT,
-      border: "1px solid " + (on ? "transparent" : COLORS.border), background: on ? COLORS.accent : COLORS.card, boxShadow: on ? "none" : "none",
+    return <button key={id} onClick={function(){ setScope(id); }} className={on ? undefined : "mo-lgchip"} style={{ flexShrink: 0, padding: "7px 13px", borderRadius: 11, cursor: "pointer", fontFamily: FONT,
+      border: "1px solid " + (on ? COLORS.accent : COLORS.border), background: on ? COLORS.accent : "transparent",
       color: on ? "#fff" : COLORS.textSecondary, fontSize: 12, fontWeight: on ? 800 : 600, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{text}</button>;
   }
 
@@ -4019,9 +4574,9 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
 
       {tab === "coupons"
         ? (mine === null
-            ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "36px 0" }}>{t.loading}</div>
+            ? <SkeletonRows rows={4} avatar={false} />
             : mine.items.length === 0
-              ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "36px 0" }}>Henüz kupon yapmadın. Bir maça girip tahmin yap!</div>
+              ? <EmptyState icon={<EmptyIcon name="coupon" />} title="Henüz kupon yok" hint="Bir maça gir, 1X2 + maçın adamı + oyuncu reytinglerini tahmin et; tuttukça itibar kazan." />
               : <div>{mine.items.map(function(row){ return <CouponRow key={row.id} row={row} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(row.meta || { id: row.match_id }); }} onDelete={function(){ deleteCoupon(row); }} />; })}</div>)
         : <div>
             {/* scope chips: weekly / season / my leagues */}
@@ -4031,9 +4586,9 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
               {leagues.map(function(l){ return chip(l.id, l.name); })}
             </div>
             {board === null
-              ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>{t.loading}</div>
+              ? <SkeletonRows rows={6} avatar={false} />
               : board.length === 0
-                ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>Henüz puanlanan tahmin yok.</div>
+                ? <EmptyState icon={<EmptyIcon name="trophy" />} title="Sıralama henüz boş" hint="Maçlar bitip kuponlar puanlandıkça liderlik burada oluşur." />
                 : <div>{board.map(function(r, i){
                     var me = uid && String(r.user_id) === String(uid);
                     return <div key={r.user_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, marginBottom: 4,
@@ -4049,7 +4604,7 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <input value={newName} onChange={function(e){ setNewName(e.target.value); }} placeholder="Lig adı"
                 style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: 11, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
-              <button onClick={createLeague} disabled={busy} style={{ padding: "9px 14px", borderRadius: 11, border: "none", background: COLORS.accent, boxShadow: "none", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>Oluştur</button>
+              <button onClick={createLeague} disabled={busy} style={{ padding: "9px 14px", borderRadius: 11, border: "none", background: COLORS.accent, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>Oluştur</button>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input value={joinCode} onChange={function(e){ setJoinCode(e.target.value.toUpperCase()); }} placeholder="Katılım kodu"
@@ -4096,42 +4651,92 @@ function CouponRow({ row, t, onOpen, onDelete }) {
 
 // Football DNA: a small identity fingerprint from the user's ratings + predictions.
 // Axes are derived from data we already store (no player-attribute metadata needed yet).
-function FootballDNA({ t }) {
+// Taste Graph — the EARNED identity: bipolar axes drawn from the user's own logs (style tags)
+// and rating consensus. AI only holds the mirror; every mark is the resultant of the user's taps.
+function FootballDNA({ t, userId }) {
+  var [logs, setLogs] = useState(null);
   var [prof, setProf] = useState(null);
-  var [preds, setPreds] = useState(null);
   useEffect(function(){
-    var cancelled = false;
-    fetchUserRatingProfile().then(function(p){ if (!cancelled) setProf(p || { n: 0 }); }).catch(function(){ if (!cancelled) setProf({ n: 0 }); });
-    fetchMyPredictions(200).then(function(r){ if (!cancelled) setPreds(r || { items: [] }); }).catch(function(){ if (!cancelled) setPreds({ items: [] }); });
-    return function(){ cancelled = true; };
-  }, []);
-  if (!prof || !preds) return <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.loading}</div>;
-  var scored = (preds.items || []).filter(function(x){ return x.scored; });
-  var n = prof.n || 0;
-  if (n < 3 && scored.length < 1) {
-    return <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, lineHeight: 1.5 }}>
-      DNA'n oluşuyor — birkaç oyuncuya puan ver ve tahmin yap, futbol kimliğin şekillensin.</div>;
+    var c = false;
+    (userId ? fetchUserLogs(userId, 300) : fetchMyLogs(300)).then(function(l){ if (!c) setLogs(l || []); }).catch(function(){ if (!c) setLogs([]); });
+    fetchUserRatingProfile(userId).then(function(p){ if (!c) setProf(p || { n: 0 }); }).catch(function(){ if (!c) setProf({ n: 0 }); });
+    return function(){ c = true; };
+  }, [userId]);
+  if (logs === null || !prof) return <div style={{ background: COLORS.card, borderRadius: 18, border: "1px solid " + COLORS.border, padding: "16px" }}>
+    {[0,1,2,3].map(function(i){ return <div key={i} style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 7 }}><Skeleton w={70} h={11} /><Skeleton w={54} h={11} /></div>
+      <Skeleton w={"100%"} h={8} r={6} />
+    </div>; })}
+  </div>;
+
+  // aggregate the style-tag votes into the two aesthetic axes
+  var vec = {}; STYLE_TAGS.forEach(function(x){ vec[x.id] = x.vec; });
+  var es = 0, rl = 0, tc = 0;
+  logs.forEach(function(l){ (l.tags || []).forEach(function(id){ var v = vec[id]; if (v) { es += v.est; rl += v.rol; tc++; } }); });
+  var estV = tc ? es / tc : 0, rolV = tc ? rl / tc : 0;
+  var n = prof.n || 0, absd = prof.avg_absdiff, diff = prof.avg_diff;
+
+  if (logs.length === 0 && n < 3) {
+    return <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border, lineHeight: 1.5 }}>
+      Taste Graph'ın oluşuyor — biten maçları logla (puan + etiket + oyuncu). Grafiği AI değil, senin seçimlerin çizecek.</div>;
   }
-  function clamp(v){ return Math.max(3, Math.min(100, Math.round(v))); }
-  var avgPts = scored.length ? scored.reduce(function(s, x){ return s + (x.points || 0); }, 0) / scored.length : 0;
-  var axes = [
-    { key: "Aktiflik", val: clamp(n * 3), hint: n + " puanlama" },
-    { key: "Cömertlik", val: prof.avg_diff != null ? clamp(50 + prof.avg_diff * 30) : 50, hint: prof.avg_diff != null ? (prof.avg_diff >= 0 ? "+" : "") + prof.avg_diff.toFixed(1) + " vs topluluk" : "—" },
-    { key: "Uyum", val: prof.avg_absdiff != null ? clamp(100 - prof.avg_absdiff * 45) : 50, hint: "toplulukla örtüşme" },
-    { key: "İsabet", val: scored.length ? clamp(avgPts / 28 * 100) : 3, hint: scored.length ? "maç başı " + avgPts.toFixed(0) + " puan" : "tahmin yok" },
+
+  var kontra = absd != null ? Math.min(1, absd / 1.8) : 0; // 0 = konsensüs, 1 = kontrarian
+  // Estetik/Pragmatik from the match style-tags you picked
+  var aesth = 0, prag = 0;
+  logs.forEach(function(l){ (l.tags || []).forEach(function(id){ var v = vec[id]; if (!v) return; if (v.est > 0.1) aesth++; if (v.est < -0.1) prag++; }); });
+  var nz = function(cnt){ return tc ? Math.min(1, cnt / tc * 1.5) : 0; };
+  // Hücum/Defans from the PLAYERS you actually rated (weighted by how high you rated them)
+  var atkW = 0, defW = 0, totW = 0;
+  logs.forEach(function(l){ (l.players || []).forEach(function(p){ var w = (p.rating != null ? Number(p.rating) : 6); totW += w;
+    var ps = p.pos; if (ps === "F") atkW += w; else if (ps === "M") atkW += w * 0.5; else if (ps === "D" || ps === "G") defW += w; }); });
+  var atkV = totW ? Math.min(1, atkW / totW * 1.3) : 0;
+  var defV = totW ? Math.min(1, defW / totW * 1.3) : 0;
+  // spokes ordered so related traits aren't adjacent → a readable fingerprint
+  var traits = [
+    { k: "Estetik",   v: nz(aesth) },
+    { k: "Hücum",     v: atkV },
+    { k: "Kontra",    v: n >= 3 ? kontra : 0 },
+    { k: "Cömert",    v: (n >= 3 && diff != null) ? Math.max(0, Math.min(1, (diff + 2) / 4)) : 0 },
+    { k: "Aktif",     v: Math.min(1, logs.length / 12) },
+    { k: "Uyum",      v: n >= 3 ? (1 - kontra) : 0 },
+    { k: "Defans",    v: defV },
+    { k: "Pragmatik", v: nz(prag) },
   ];
-  return <div style={{ background: COLORS.card, borderRadius: 18, padding: "16px 16px 8px" }}>
-    {axes.map(function(a, i){
-      return <div key={i} style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700 }}>{a.key}</span>
-          <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{a.hint}</span>
-        </div>
-        <div style={{ height: 8, borderRadius: 6, background: COLORS.cardAlt, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: a.val + "%", borderRadius: 6, background: COLORS.accent, transition: "width 0.5s cubic-bezier(0.22,1,0.36,1)" }} />
-        </div>
-      </div>;
-    })}
+  var top = traits.filter(function(x){ return x.v > 0.35; }).sort(function(a, b){ return b.v - a.v; }).slice(0, 3).map(function(x){ return x.k; });
+  var phrase = top.length ? top.join(" · ") : "Kimliğin şekilleniyor";
+  var kontraScore = n >= 3 ? Math.round(kontra * 100) : null;
+
+  // radar geometry
+  var N = traits.length, cx = 150, cy = 150, R = 84;
+  function pt(i, r){ var a = -Math.PI / 2 + i * 2 * Math.PI / N; return [cx + Math.cos(a) * R * r, cy + Math.sin(a) * R * r]; }
+  function ptStr(i, r){ var p = pt(i, r); return p[0].toFixed(1) + "," + p[1].toFixed(1); }
+  var dataPoly = traits.map(function(x, i){ return ptStr(i, Math.max(0.02, x.v)); }).join(" ");
+
+  return <div style={{ background: COLORS.card, borderRadius: 18, border: "1px solid " + COLORS.border, padding: "16px" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: COLORS.textPrimary, fontSize: 15, fontWeight: 800, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{phrase}</div>
+        <div style={{ color: COLORS.textMuted, fontSize: 11.5, fontWeight: 700, marginTop: 3 }}>{logs.length} log · {n} oyuncu puanı</div>
+      </div>
+      {kontraScore != null && <div style={{ flexShrink: 0, textAlign: "right" }}>
+        <div style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{kontraScore}</div>
+        <div style={{ color: COLORS.textMuted, fontSize: 10, fontWeight: 700, marginTop: 3 }}>kontra skoru</div>
+      </div>}
+    </div>
+    <svg viewBox="0 0 300 300" width="100%" style={{ display: "block", maxWidth: 330, margin: "0 auto" }}>
+      {[0.25, 0.5, 0.75, 1].map(function(rl, ri){
+        return <polygon key={ri} points={traits.map(function(x, i){ return ptStr(i, rl); }).join(" ")} strokeWidth="1" style={{ fill: "none", stroke: COLORS.border }} />;
+      })}
+      {traits.map(function(x, i){ var e = pt(i, 1); return <line key={i} x1={cx} y1={cy} x2={e[0]} y2={e[1]} strokeWidth="1" style={{ stroke: COLORS.border }} />; })}
+      <polygon points={dataPoly} strokeWidth="2" strokeLinejoin="round" style={{ fill: COLORS.accent, fillOpacity: 0.22, stroke: COLORS.accent }} />
+      {traits.map(function(x, i){ var p = pt(i, Math.max(0.02, x.v)); return <circle key={i} cx={p[0]} cy={p[1]} r="2.8" style={{ fill: COLORS.accent }} />; })}
+      {traits.map(function(x, i){
+        var p = pt(i, 1.17); var anchor = p[0] < cx - 6 ? "end" : (p[0] > cx + 6 ? "start" : "middle");
+        return <text key={i} x={p[0]} y={p[1]} textAnchor={anchor} dominantBaseline="middle"
+          style={{ fill: x.v > 0.35 ? COLORS.textPrimary : COLORS.textMuted, fontFamily: FONT, fontSize: 10, fontWeight: x.v > 0.35 ? 800 : 700 }}>{x.k}</text>;
+      })}
+    </svg>
   </div>;
 }
 
@@ -4141,13 +4746,17 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var favTeams = favRecs.filter(function(r){ return r.kind === "team"; });
   var favPlayers = favRecs.filter(function(r){ return r.kind === "player"; });
   var [my, setMy] = useState({ count: 0, items: [] });
+  var [logs, setLogs] = useState(null);
+  var [act, setAct] = useState("comments"); // activities toggle: "comments" | "logs"
+  var [logView, setLogView] = useState(null); // a log row opened in the detail sheet
   var [username, setUsername] = useState(null);
   var [editing, setEditing] = useState(false);
   var [draft, setDraft] = useState("");
   var [savingName, setSavingName] = useState(false);
   useEffect(function(){
     var cancelled = false;
-    fetchMyComments(6).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
+    fetchMyComments(20).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
+    fetchMyLogs(40).then(function(res){ if (!cancelled) setLogs(res || []); }).catch(function(){ if (!cancelled) setLogs([]); });
     fetchMyUsername().then(function(u){ if (!cancelled && u) setUsername(u); }).catch(function(){});
     return function(){ cancelled = true; };
   }, []);
@@ -4169,7 +4778,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
     { label: t.commentsCount, val: my.count },
     { label: t.membership, val: memberSince },
   ];
-  var sectionLabel = { color: COLORS.textSecondary, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 12 };
+  var sectionLabel = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 };
 
   function favStrip(list, kind) {
     return <div className="mo-scroll" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
@@ -4196,22 +4805,19 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
       <div className="mo-sticky" style={{ padding: "max(20px, env(safe-area-inset-top)) 20px 14px", zIndex: 10, background: COLORS.bg,
         borderBottom: "1px solid " + COLORS.border, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} aria-label="back" style={{ width: 38, height: 38, borderRadius: 13, background: COLORS.card, border: "none",
-            cursor: "pointer", color: COLORS.textPrimary, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>‹</button>
+          <button onClick={onBack} aria-label="back" className="mo-xbtn" style={{ width: 38, height: 38, borderRadius: 12, background: COLORS.card,
+            border: "1px solid " + COLORS.border, cursor: "pointer", color: COLORS.textSecondary, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
           <span style={{ color: COLORS.textPrimary, fontSize: 17, fontWeight: 800 }}>{t.profile}</span></div>
         <LangSwitch lang={lang} setLang={setLang} />
       </div>
 
-      {/* hero: soft gradient glow + avatar */}
-      <div style={{ position: "relative", overflow: "hidden", padding: "26px 20px 22px" }}>
-        <span aria-hidden style={{ position: "absolute", left: 0, right: 0, top: -56, height: 240, pointerEvents: "none", opacity: 0.5,
-          filter: "blur(46px)", WebkitFilter: "blur(46px)", background: "linear-gradient(120deg, " + COLORS.accent + ", " + COLORS.teal + " 72%, transparent)",
-          maskImage: "linear-gradient(180deg, #000 12%, transparent 68%)", WebkitMaskImage: "linear-gradient(180deg, #000 12%, transparent 68%)" }} />
+      {/* hero: avatar + identity. Flat — the gradient avatar is the single color moment. */}
+      <div style={{ position: "relative", padding: "26px 20px 22px" }}>
         <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ width: 72, height: 72, borderRadius: 24, flexShrink: 0,
             background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff",
-            boxShadow: "0 8px 22px " + COLORS.accent + "44" }}>{initial}</div>
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff" }}>{initial}</div>
           <div style={{ minWidth: 0, flex: 1 }}>
             {editing
               ? <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
@@ -4219,7 +4825,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
                     onKeyDown={function(e){ if (e.key === "Enter") saveName(); }}
                     style={{ flex: 1, minWidth: 0, padding: "7px 12px", background: COLORS.card, border: "1px solid " + COLORS.border,
                       borderRadius: 12, color: COLORS.textPrimary, fontSize: 16, fontWeight: 700, outline: "none", fontFamily: FONT }} />
-                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accent, boxShadow: "none", color: "#fff",
+                  <button onClick={saveName} disabled={savingName} style={{ padding: "8px 14px", background: COLORS.accent, color: "#fff",
                     border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, flexShrink: 0 }}>{t.save}</button>
                 </div>
               : <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -4237,7 +4843,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
 
       <div style={{ padding: "0 20px 60px" }}>
         {/* stats: single card, 4 columns with dividers */}
-        <div style={{ display: "flex", background: COLORS.card, borderRadius: 18, padding: "16px 6px", marginBottom: 24 }}>
+        <div style={{ display: "flex", background: COLORS.card, borderRadius: 18, border: "1px solid " + COLORS.border, padding: "16px 6px", marginBottom: 24 }}>
           {stats.map(function(st, i){ return <div key={i} style={{ flex: 1, textAlign: "center", minWidth: 0, padding: "0 4px",
             borderLeft: i ? "1px solid " + COLORS.border : "none" }}>
             <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800, marginBottom: 3,
@@ -4246,7 +4852,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
         </div>
 
         {/* Football DNA — your rating/prediction fingerprint */}
-        <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Football DNA</div><FootballDNA t={t} /></div>
+        <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Taste Graph</div><FootballDNA t={t} /></div>
 
         {/* favorites */}
         {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
@@ -4256,21 +4862,50 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
           <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.noFavorites}</div>
         </div>}
 
-        {/* real recent comments */}
-        {my.items.length > 0 && <div style={{ marginBottom: 8 }}>
-          <div style={sectionLabel}>{t.recentComments}</div>
-          {my.items.map(function(c){
-            var isPl = c.target_type === "player";
-            var ctx = c.match_name || c.target_name || "";
-            return <div key={c.id} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16 }}>
-              <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.45, marginBottom: ctx ? 7 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
-              {ctx && <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: COLORS.textMuted }}>
-                <span style={{ fontWeight: 800, color: COLORS.accent }}>{isPl ? t.playerTag : t.matchTag}</span>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{ctx}</span>
-                <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(c.created_at, lang)}</span>
-              </div>}
-            </div>; })}
-        </div>}
+        {/* Activities: comments + logs behind one toggle */}
+        <div style={{ marginBottom: 8 }}>
+          <div style={sectionLabel}>Aktiviteler</div>
+          <UnderlineTabs indicatorColor={COLORS.accent} active={act} onChange={setAct}
+            tabs={[{ id: "comments", label: "Yorumlar" }, { id: "logs", label: "Loglar" }]} />
+          <div style={{ marginTop: 12 }}>
+            {act === "comments"
+              ? (my.items.length > 0
+                  ? my.items.map(function(c){
+                      var isPl = c.target_type === "player";
+                      var ctx = c.match_name || c.target_name || "";
+                      return <div key={c.id} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>
+                        <div style={{ color: COLORS.textPrimary, fontSize: 13, lineHeight: 1.45, marginBottom: ctx ? 7 : 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
+                        {ctx && <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: COLORS.textMuted }}>
+                          <span style={{ fontWeight: 800, color: COLORS.accent }}>{isPl ? t.playerTag : t.matchTag}</span>
+                          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{ctx}</span>
+                          <span style={{ marginLeft: "auto", flexShrink: 0 }}>{relTime(c.created_at, lang)}</span>
+                        </div>}
+                      </div>; })
+                  : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz yorum yok.</div>)
+              : (logs === null
+                  ? <SkeletonRows rows={4} card={false} />
+                  : logs.length > 0
+                    ? logs.map(function(g){
+                        return <div key={g.id} onClick={function(){ setLogView(g); }} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: (g.tags && g.tags.length) ? 8 : 0 }}>
+                            <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.home, t)} - {locTeam(g.away, t)}</span>
+                            <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{Number(g.rating).toFixed(1)}</span>
+                          </div>
+                          {g.tags && g.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {g.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{f ? f.label : id}</span>; })}
+                          </div>}
+                          <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 7 }}>{relTime(g.created_at, lang)}</div>
+                        </div>; })
+                    : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok — biten bir maça girip logla.</div>)}
+          </div>
+        </div>
+
+        {logView && <RatingDetailSheet
+          match={{ id: logView.match_id, home: logView.home, away: logView.away }}
+          log={{ userId: (session && session.user && session.user.id), own: true, rating: Number(logView.rating), tags: logView.tags }}
+          t={t}
+          onClose={function(){ setLogView(null); }}
+          onDelete={function(){ return deleteMatchLog(logView.match_id).then(function(){ setLogs(function(cur){ return (cur || []).filter(function(x){ return x.id !== logView.id; }); }); }); }} />}
 
         <button onClick={onLogout} style={{ width: "100%", marginTop: 20, padding: 14, background: "transparent",
           border: "1px solid " + COLORS.red + "55", borderRadius: 16, color: COLORS.red, fontSize: 14,
@@ -4363,7 +4998,6 @@ function LoginScreen({ t, lang, setLang, theme, onClose }) {
       {info && <div style={{ color: COLORS.accent, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{info}</div>}
 
       <button onClick={go} disabled={loading} style={{ width: "100%", padding: 14, background: loading ? COLORS.textMuted : COLORS.accent,
-        boxShadow: loading ? "none" : "none",
         border: "none", borderRadius: 16, color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: FONT }}>
         {loading ? t.loggingIn : (mode === "signup" ? t.signup : t.login)}</button>
 
@@ -4395,7 +5029,7 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
   }, []);
   function close(){ setShow(false); setTimeout(onClose, 300); }
   var card = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: COLORS.card, borderRadius: 14, marginBottom: 10 };
-  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 8px" };
+  var label = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", margin: "18px 2px 8px" };
   return <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 140, display: "flex", justifyContent: "flex-end",
     background: show ? "rgba(8,10,16,0.5)" : "rgba(8,10,16,0)", backdropFilter: show ? "blur(3px)" : "none", WebkitBackdropFilter: show ? "blur(3px)" : "none",
     transition: "background 0.3s ease, backdrop-filter 0.3s ease, -webkit-backdrop-filter 0.3s ease" }}>
@@ -4439,11 +5073,11 @@ function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, on
 // Drop the files in /public; if missing, it falls back to the SVG.
 var NAV_IMG = { mac: "/nav-mac.png", topluluk: "/community.png" };
 var NAV_TINT = { mac: true, topluluk: true }; // recolor the shape (grey -> accent) like the SVG icons, instead of its own colors
-// Recolor a transparent PNG via CSS mask: the shape is filled with the element's current text color.
-function MaskIcon({ src, size }) {
-  return <span style={{ width: size || 24, height: size || 24, display: "inline-block", flexShrink: 0, backgroundColor: "currentColor",
+// Recolor a transparent PNG via CSS mask: the shape is filled with `color` (defaults to current text color).
+function MaskIcon({ src, size, color, style }) {
+  return <span style={Object.assign({ width: size || 24, height: size || 24, display: "inline-block", flexShrink: 0, backgroundColor: color || "currentColor",
     WebkitMaskImage: "url(" + src + ")", maskImage: "url(" + src + ")", WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
-    WebkitMaskPosition: "center", maskPosition: "center", WebkitMaskSize: "contain", maskSize: "contain" }} />;
+    WebkitMaskPosition: "center", maskPosition: "center", WebkitMaskSize: "contain", maskSize: "contain" }, style || {})} />;
 }
 function NavIcon({ id, active, svg }) {
   var [imgOk, setImgOk] = useState(true);
@@ -4580,7 +5214,7 @@ function CommentCard({ c, onOpenMatch, t, liveLookup }) {
       alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 16, fontWeight: 800 }}>{initial}</span>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-        <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>@{name}</span>
+        <UserLink userId={c.user_id} username={name} t={t} style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} />
         <span style={{ color: COLORS.textMuted, fontSize: 12, flexShrink: 0 }}>· {relTime(c.created_at, t && t._lang)}</span>
       </div>
       <div style={{ color: COLORS.textPrimary, fontSize: 14, lineHeight: 1.45, marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
@@ -4600,9 +5234,9 @@ function CommunityPage({ onBack, t, onOpenMatch, liveLookup }) {
   return <SimplePage title={t.community} onBack={onBack} t={t}>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
       {list === null
-        ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.loading}</div>
+        ? <SkeletonRows rows={5} />
         : list.length === 0
-          ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.noComments}</div>
+          ? <EmptyState icon={<EmptyIcon name="chat" />} title="Henüz yorum yok" hint="İlk yorumu sen yaz — bir maça girip topluluğa katıl." />
           : list.map(function(c){ return <CommentCard key={c.id} c={c} onOpenMatch={onOpenMatch} t={t} liveLookup={liveLookup} />; })}
     </div>
   </SimplePage>;
@@ -4635,17 +5269,17 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer,
   var teams = recs.filter(function(r){ return r.kind === "team"; });
   var players = recs.filter(function(r){ return r.kind === "player"; });
   var matchFavs = recs.filter(function(r){ return r.kind === "match"; });
-  var label = { color: COLORS.textSecondary, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", margin: "18px 2px 6px" };
+  var label = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", margin: "18px 2px 6px" };
   return <SimplePage title={t.favorites} onBack={onBack} t={t}>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
       {!loggedIn
         ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>
             {t.favLoginPrompt}
-            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, boxShadow: "none", color: "#fff",
+            <div style={{ marginTop: 14 }}><button onClick={onLogin} style={{ padding: "9px 18px", background: COLORS.accent, color: "#fff",
               border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.signInBtn}</button></div>
           </div>
         : recs.length === 0
-          ? <div style={{ textAlign: "center", padding: "44px 0", color: COLORS.textMuted, fontSize: 13 }}>{t.noFavorites}</div>
+          ? <EmptyState icon={<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" /></svg>} title="Favori yok" hint="Takım veya oyuncuların yanındaki kaydet butonuna dokun; buraya düşsünler." />
           : <div>
               {matchFavs.length > 0 && <div><div style={label}>{t.matchesLabel || "Maçlar"}</div>
                 {matchFavs.map(function(r){ return <FavoriteRow key={r.kind + r.ref_id} rec={r} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(r); }} />; })}</div>}
@@ -4695,9 +5329,17 @@ function NewsPage({ onBack, t, lang }) {
   return <SimplePage title={t.news} onBack={onBack} t={t}>
     <div style={{ maxWidth: 680, margin: "0 auto" }}>
       {news === null
-        ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.loading}</div>
+        ? <div>
+            <Skeleton w={"100%"} h={200} r={18} />
+            <div className="mo-newsgrid" style={{ display: "grid", gap: 12, marginTop: 14 }}>
+              {[0,1,2,3].map(function(i){ return <div key={i}>
+                <Skeleton w={"100%"} h={116} r={16} />
+                <Skeleton w={"82%"} h={12} style={{ marginTop: 10 }} />
+                <Skeleton w={"48%"} h={10} style={{ marginTop: 8 }} /></div>; })}
+            </div>
+          </div>
         : news.length === 0
-          ? <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>{t.newsSoon}</div>
+          ? <EmptyState icon={<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h13v16H6a2 2 0 0 1-2-2z"/><path d="M17 8h3v10a2 2 0 0 1-2 2M8 8h5M8 12h5M8 16h3"/></svg>} title={t.newsSoon} />
           : <div>
               <NewsCard n={news[0]} big lang={lang} />
               <div className="mo-newsgrid" style={{ display: "grid", gap: 12, marginTop: 14 }}>
@@ -4710,14 +5352,66 @@ function NewsPage({ onBack, t, lang }) {
 
 // Global CSS — rendered on EVERY screen (main + community/settings/etc.) so .mo-matchsheet,
 // .mo-scroll, .mo-sticky and the responsive rules apply even on the early-return pages.
+// ── Loading & empty primitives (modern product-register vocabulary) ──────────
+// Shimmer placeholder block.
+function Skeleton({ w, h, r, style }) {
+  return <span className="mo-skel" style={Object.assign({ display: "block", width: w == null ? "100%" : w, height: h == null ? 12 : h, borderRadius: r == null ? 8 : r }, style || {})} />;
+}
+// Match-row-shaped skeletons for feed / list loading (replaces "Yükleniyor…" text).
+function SkeletonRows({ rows, avatar, card }) {
+  var n = rows || 5; var arr = []; for (var i = 0; i < n; i++) arr.push(i);
+  var body = arr.map(function(i){
+    return <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 2px", borderBottom: i < n - 1 ? "1px solid " + COLORS.border : "none" }}>
+      <Skeleton w={30} h={26} r={7} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 9 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{avatar !== false && <Skeleton w={20} h={20} r={10} />}<Skeleton w={"52%"} h={10} /></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{avatar !== false && <Skeleton w={20} h={20} r={10} />}<Skeleton w={"40%"} h={10} /></div>
+      </div>
+      <Skeleton w={34} h={22} r={7} />
+    </div>;
+  });
+  return card === false ? <div>{body}</div> : <div style={{ background: COLORS.card, borderRadius: 18, padding: "4px 12px 8px" }}>{body}</div>;
+}
+// Teaching empty state: icon + message (+ optional action), never a bare "nothing here".
+function EmptyState({ icon, title, hint, action, onAction }) {
+  return <div style={{ textAlign: "center", padding: "42px 24px", animation: "moFade 0.26s ease both" }}>
+    {icon && <div style={{ width: 52, height: 52, borderRadius: 16, margin: "0 auto 14px", background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</div>}
+    <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, marginBottom: hint ? 5 : 0 }}>{title}</div>
+    {hint && <div style={{ color: COLORS.textMuted, fontSize: 12.5, lineHeight: 1.5, maxWidth: 300, margin: "0 auto" }}>{hint}</div>}
+    {action && onAction && <button onClick={onAction} style={{ marginTop: 16, padding: "9px 18px", background: COLORS.accent, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{action}</button>}
+  </div>;
+}
+// Small inline icons for empty states.
+function EmptyIcon({ name }) {
+  var p = { width: 26, height: 26, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  if (name === "ball") return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>;
+  if (name === "chat") return <svg {...p}><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.4 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1 3.6-11.3 8.4 8.4 0 0 1 12.5 7.5z" /></svg>;
+  if (name === "bell") return <svg {...p}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>;
+  if (name === "coupon") return <svg {...p}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>;
+  if (name === "trophy") return <svg {...p}><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3" /></svg>;
+  return <svg {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>;
+}
+
 function AppStyles() {
   return <style>{"@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}" +
     "@keyframes rippleFill{0%{transform:scale(0);opacity:0.18}60%{opacity:0.12}100%{transform:scale(1);opacity:0}}" +
     "@keyframes moDrop{from{opacity:0;transform:translateY(-9px)}to{opacity:1;transform:translateY(0)}}" +
     "@keyframes moFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}" +
+    "@keyframes moShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}" +
+    ".mo-skel{background:linear-gradient(90deg,var(--cardAlt) 25%,var(--border) 50%,var(--cardAlt) 75%);background-size:200% 100%;animation:moShimmer 1.4s ease-in-out infinite}" +
+    // reduced motion: kill decorative animation + long transitions (DESIGN.md requirement)
+    "@media(prefers-reduced-motion:reduce){*{animation-duration:0.001ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important;scroll-behavior:auto!important}}" +
     "*{box-sizing:border-box}::-webkit-scrollbar{display:none}html,body{margin:0;-webkit-text-size-adjust:100%}" +
+    // keyboard focus ring (mouse/touch users never see it; keyboard users always do)
+    "button:focus-visible,a:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}" +
+    "input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}" +
     ".mo-shell{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}" +
     ".mo-scroll{-webkit-overflow-scrolling:touch}" +
+    ".mo-lgchip{transition:background .2s ease,border-color .2s ease,color .2s ease}" +
+    "@media(hover:hover){.mo-lgchip:hover{border-color:var(--accent);color:var(--textPrimary)}}" +
+    ".mo-xbtn{transition:background .2s ease,color .2s ease,border-color .2s ease}" +
+    "@media(hover:hover){.mo-xbtn:hover{background:var(--accentDim);color:var(--accent);border-color:var(--accent)}}" +
+    ".mo-xbtn:active{transform:scale(0.92)}" +
     ".mo-sticky{position:-webkit-sticky;position:sticky;top:0;-webkit-transform:translateZ(0);transform:translateZ(0)}" +
     ".mo-container{max-width:560px;margin:0 auto;width:100%}" +
     ".mo-wide{max-width:1100px;margin:0 auto;width:100%}" +
@@ -4801,6 +5495,10 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   var [showFavorites, setShowFavorites] = useState(false); // favorites (teams & players)
   var [showPredictions, setShowPredictions] = useState(false); // predictions hub (coupons + leaderboards)
   var [theme, setTheme] = useState("dark"); // default dark; overridden by saved pref on mount
+  // Keep the CURRENT_THEME global in sync DURING render (not just in the effect below), so theme-aware
+  // helpers like leagueLogo() read the right value in the same render — otherwise logos lag one toggle
+  // behind on surfaces that don't re-render often (e.g. the static desktop feed).
+  CURRENT_THEME = theme;
 
   // load saved theme (or system preference) once, then apply on change
   useEffect(function(){
@@ -5056,7 +5754,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t} onClose={function(){ setSelectedMatch(null); }} />}</>;
   if (showSettings) return <SimplePage title={t.settings} onBack={function(){ setShowSettings(false); }} t={t}>
     <div style={{ marginBottom: 22 }}>
-      <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 10 }}>{t.appearance}</div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 10 }}>{t.appearance}</div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: COLORS.card,
         border: "none", borderRadius: 14, padding: "14px 16px" }}>
         <span style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600 }}>{t.darkMode}</span>
@@ -5070,7 +5768,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
       </div>
     </div>
     <div style={{ marginBottom: 20 }}>
-      <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 10 }}>{t.language}</div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 10 }}>{t.language}</div>
       <LangSwitch lang={lang} setLang={setLang} />
     </div>
     <div style={{ color: COLORS.textMuted, fontSize: 13 }}>{t.moreSoon}</div>
@@ -5184,7 +5882,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                     </button>
                   : <button onClick={function(){ setShowLogin(true); }} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 12,
-                      background: COLORS.accent, boxShadow: "none", border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
+                      background: COLORS.accent, border: "none", cursor: "pointer", color: "#fff", fontSize: 13, fontWeight: 700,
                       fontFamily: FONT, whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>
                       {t.signInBtn}
@@ -5226,7 +5924,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
 
       <div className="mo-wide" style={{ padding: "16px 16px max(80px, env(safe-area-inset-bottom))", overflow: "hidden" }}>
         <SlidePanel slideKey={listKey} dir={slideDir}>
-            {loading ? <div style={{ textAlign: "center", padding: "70px 20px", color: COLORS.textSecondary, fontSize: 14 }}>{t.loading}</div>
+            {loading ? <div style={{ padding: "2px 0" }}><SkeletonRows rows={7} /></div>
              : (function(){
               var q = query.trim().toLowerCase();
               var isF1 = activeSport === "motorsport";
