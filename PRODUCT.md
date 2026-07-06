@@ -52,6 +52,13 @@ side** (2-1 or 1-2, never 3-0, so both teams are always judged). Each log is a
 diary entry that accumulates and a bundle of **votes** that move the user's **Taste
 Graph**.
 
+The log serves **two audiences under one structure**: the **stadium traveler** (who
+physically attends and *checks in* at the ground) and the **home viewer** (who watches
+on a screen). Every log therefore records *how it was watched* — **Statta** (attended,
+capturing the venue → a real "Stadiums" collection / passport) or **Ekrandan** (screen).
+The collection, the pre-match check-in, and the "Ben Demiştim" shareable card are
+*developments on top* of this foundation, built after the log itself is solid.
+
 The hard rule, and the reason this can work where a "Football Taste Graph" would
 otherwise die: **identity is earned, never assigned.** The Taste Graph is not drawn
 by AI ("you like possession football") — the user cannot argue with an AI label and

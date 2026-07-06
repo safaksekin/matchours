@@ -10,16 +10,28 @@ create table if not exists public.match_logs (
   rating     numeric(3,1) not null check (rating >= 0 and rating <= 10),
   tags       jsonb not null default '[]'::jsonb,
   players    jsonb not null default '[]'::jsonb,  -- [{pos,rating,side}] of the rated players → role axes
+  attended   boolean not null default false,      -- true = watched at the stadium (check-in) vs on a screen
+  venue      text,                                -- the ground, stored when attended → Stadiums collection
+  photo      text,                                -- one photo from the ground (public URL in the log-photos bucket)
   home       text,
   away       text,
+  home_logo  text,
+  away_logo  text,
+  score      text,
   league     text,
   match_ts   timestamptz,
   created_at timestamptz not null default now(),
   unique (user_id, match_id)
 );
 
--- for installs created before the players column existed:
-alter table public.match_logs add column if not exists players jsonb not null default '[]'::jsonb;
+-- for installs created before these columns existed:
+alter table public.match_logs add column if not exists players  jsonb not null default '[]'::jsonb;
+alter table public.match_logs add column if not exists attended boolean not null default false;
+alter table public.match_logs add column if not exists venue    text;
+alter table public.match_logs add column if not exists photo     text;
+alter table public.match_logs add column if not exists home_logo text;
+alter table public.match_logs add column if not exists away_logo text;
+alter table public.match_logs add column if not exists score     text;
 
 create index if not exists match_logs_match_idx on public.match_logs (match_id);
 create index if not exists match_logs_user_idx  on public.match_logs (user_id, created_at desc);

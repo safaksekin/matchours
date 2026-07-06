@@ -522,6 +522,7 @@ export async function GET(request) {
         weight: p.weight || null,
         position: (primary.games && primary.games.position) || p.position || null,
         team: { name: (primary.team && primary.team.name) || null, logo: (primary.team && primary.team.logo) || null },
+        teamId: (primary.team && primary.team.id) || null,
         season: parseInt(season, 10),
         totals: {
           appearances: apps, goals: goals, assists: assists, minutes: minutes,
@@ -533,6 +534,68 @@ export async function GET(request) {
         trophiesWon: trophiesWon,
       },
     });
+  }
+
+  // ── Fixture crests + score by fixture id (backfill logos/score onto older logs) ──
+  if (mode === "fixturemeta") {
+    const idsParam = searchParams.get("ids") || "";
+    const ids = idsParam.split(",").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 20);
+    if (!ids.length) return Response.json({ meta: {} });
+    const data = await apiGet("/fixtures?ids=" + ids.join("-"), 86400);
+    const meta = {};
+    (data || []).forEach(function (f) {
+      if (!f.fixture) return;
+      const hg = f.goals ? f.goals.home : null, ag = f.goals ? f.goals.away : null;
+      meta[String(f.fixture.id)] = {
+        homeLogo: (f.teams && f.teams.home && f.teams.home.logo) || null,
+        awayLogo: (f.teams && f.teams.away && f.teams.away.logo) || null,
+        score: (hg != null && ag != null) ? (hg + " - " + ag) : null,
+      };
+    });
+    return Response.json({ meta });
+  }
+
+  // ── A player's last games with the rating they earned (SofaScore-style form) ──
+  if (mode === "playergames") {
+    const id = searchParams.get("id");
+    const team = searchParams.get("team");
+    const season = searchParams.get("season") || 2025;
+    if (!id || !team) return Response.json({ games: [] });
+    const fxData = await apiGet("/fixtures?team=" + team + "&season=" + season + "&last=12", 3600);
+    const done = { FT: 1, AET: 1, PEN: 1 };
+    const fixtures = (fxData || []).filter(function (f) { return f.fixture && f.fixture.status && done[f.fixture.status.short]; });
+    const out = [];
+    for (let i = 0; i < fixtures.length && out.length < 5; i++) {
+      const f = fixtures[i];
+      const fid = f.fixture.id;
+      const pdata = await apiGet("/fixtures/players?fixture=" + fid, 604800); // finished -> immutable, 7d
+      let rating = null, mins = null;
+      (pdata || []).forEach(function (tp) {
+        (tp.players || []).forEach(function (pl) {
+          if (pl.player && String(pl.player.id) === String(id)) {
+            const st = (pl.statistics && pl.statistics[0]) || {};
+            const gm = st.games || {};
+            if (gm.rating != null) { const rv = parseFloat(gm.rating); if (!isNaN(rv)) rating = rv; }
+            mins = gm.minutes != null ? gm.minutes : null;
+          }
+        });
+      });
+      if (rating == null && (mins == null || mins === 0)) continue; // didn't feature
+      const home = f.teams.home, away = f.teams.away;
+      const isHome = String(home.id) === String(team);
+      const opp = isHome ? away : home;
+      const tg = isHome ? f.goals.home : f.goals.away;
+      const og = isHome ? f.goals.away : f.goals.home;
+      out.push({
+        fixtureId: fid,
+        date: f.fixture.date ? f.fixture.date.slice(0, 10) : null,
+        opponent: opp.name, opponentLogo: opp.logo, home: isHome,
+        score: (tg != null ? tg : "-") + "-" + (og != null ? og : "-"),
+        result: (tg != null && og != null) ? (tg > og ? "W" : tg < og ? "L" : "D") : null,
+        rating: rating != null ? Math.round(rating * 100) / 100 : null,
+      });
+    }
+    return Response.json({ games: out });
   }
 
   // ── Team profile: info + venue + domestic-season stats + rank + fixtures ──

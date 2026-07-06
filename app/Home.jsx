@@ -9,7 +9,7 @@ import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addCommen
   createPredLeague, joinPredLeague, fetchMyPredLeagues, getUserId, deletePrediction,
   fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile,
   saveMatchLog, fetchMyMatchLog, fetchMyLogs, fetchMatchLogs, fetchUserMatchRatings, fetchLogCounts, deleteMatchLog,
-  fetchUserLogs, fetchUserComments } from "./lib/db";
+  fetchUserLogs, fetchUserComments, uploadLogPhoto, fetchMyRatedPlayers, backfillLogLogos } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -1971,7 +1971,7 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
 
   return <div style={{ background: "transparent", padding: "14px 18px 18px",
     }}>
-    {!isF1 && match.status === "finished" && <MatchLogCard match={match} lineups={detail && detail.lineups} t={t} />}
+    {!isF1 && match.status === "finished" && <MatchLogCard match={match} lineups={detail && detail.lineups} venue={s.stadium} t={t} />}
     <div style={{ marginBottom: 12 }}>
       <UnderlineTabs indicatorColor={COLORS.accent} tabs={tabs} active={tab} onChange={setTab} />
     </div>
@@ -2931,11 +2931,17 @@ function matchWord(v){
 
 // The atomic post-match action: rate the watch (stars) + tag why (paint) + rate 3 players
 // (≥1 from each side). Saving stamps a diary row and feeds the Taste Graph.
-function MatchLogSheet({ match, lineups, existing, t, onClose, onSaved, onDeleted }) {
+function MatchLogSheet({ match, lineups, venue, existing, t, onClose, onSaved, onDeleted }) {
   var [visible, setVisible] = useState(false);
   var drag = useSheetDrag(function(){ doClose(); });
   var [rating, setRating] = useState(existing && existing.rating != null ? Number(existing.rating) : 3.0);
   var [rated, setRated] = useState(!!(existing && existing.rating != null)); // must rate the match before saving
+  var [attended, setAttended] = useState(!!(existing && existing.attended)); // stadium check-in vs screen
+  var [photoFile, setPhotoFile] = useState(null);
+  var [photoPrev, setPhotoPrev] = useState((existing && existing.photo) || null); // preview src (existing url or local blob)
+  var photoInput = useRef(null);
+  function onPickPhoto(e){ var f = e.target.files && e.target.files[0]; if (!f) return; setPhotoFile(f); setPhotoPrev(URL.createObjectURL(f)); }
+  function clearPhoto(){ setPhotoFile(null); setPhotoPrev(null); }
   var [tags, setTags] = useState(existing && Array.isArray(existing.tags) ? existing.tags.slice() : []);
   var [sel, setSel] = useState([]);      // [{ id, name, photo, side, val }]
   var [side, setSide] = useState("home");
@@ -2988,15 +2994,23 @@ function MatchLogSheet({ match, lineups, existing, t, onClose, onSaved, onDelete
 
   function save(){
     if (!canSave) return; setSaving(true); setErr(null);
-    // save the MATCH log first — player ratings must never be orphaned without a logged match
-    saveMatchLog({ matchId: match.id, rating: rating, tags: tags, home: match.home, away: match.away,
-      league: match.league, matchTs: match.ts ? new Date(match.ts).toISOString() : null,
-      players: sel.map(function(p){ return { pos: p.pos || null, rating: p.val, side: p.side }; }) })
+    var photoUrl = (attended && photoPrev && !photoFile) ? photoPrev : null; // keep existing url, unless cleared/replaced
+    // upload the stadium photo first (best-effort — a failed upload never blocks the log)
+    var pre = (attended && photoFile) ? uploadLogPhoto(match.id, photoFile).then(function(r){ if (r && r.url) photoUrl = r.url; }).catch(function(){})
+      : Promise.resolve();
+    pre.then(function(){
+      // save the MATCH log — player ratings must never be orphaned without a logged match
+      return saveMatchLog({ matchId: match.id, rating: rating, tags: tags, home: match.home, away: match.away,
+        homeLogo: match.homeLogo, awayLogo: match.awayLogo, score: match.score,
+        league: match.league, matchTs: match.ts ? new Date(match.ts).toISOString() : null,
+        attended: attended, venue: venue || null, photo: photoUrl,
+        players: sel.map(function(p){ return { pos: p.pos || null, rating: p.val, side: p.side }; }) });
+    })
       .then(function(res){
         if (res && res.error) return Promise.reject(res.error);
         return Promise.all(sel.map(function(p){ return saveRating({ targetType: "player", targetId: p.id, matchId: match.id, targetName: p.name, sport: "football", rating: p.val }); }));
       })
-      .then(function(){ setSaving(false); if (onSaved) onSaved({ rating: rating, tags: tags }); doClose(); })
+      .then(function(){ setSaving(false); if (onSaved) onSaved({ rating: rating, tags: tags, attended: attended, venue: attended ? (venue || null) : null, photo: attended ? photoUrl : null }); doClose(); })
       .catch(function(){ setSaving(false); setErr("Kaydedilemedi — tekrar dene."); });
   }
 
@@ -3044,6 +3058,31 @@ function MatchLogSheet({ match, lineups, existing, t, onClose, onSaved, onDelete
       </div>
 
       <div style={{ padding: "0 18px max(24px, env(safe-area-inset-bottom))" }}>
+        {/* 0 — how did you watch it: at the ground (check-in) or on a screen */}
+        <div style={{ display: "flex", gap: 8, marginBottom: attended ? 8 : 22 }}>
+          {[{ on: false, label: "Ekrandan", icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="14" rx="2" /><path d="M8 21h8M12 18v3" /></svg> },
+            { on: true, label: "Statta", icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg> }].map(function(m){
+            var a = attended === m.on;
+            return <button key={String(m.on)} onClick={function(){ setAttended(m.on); }} style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "10px 8px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
+              border: "1px solid " + (a ? COLORS.accent : COLORS.border), background: a ? COLORS.accentDim : "transparent", color: a ? COLORS.accent : COLORS.textSecondary,
+              fontSize: 13, fontWeight: a ? 800 : 600, WebkitTapHighlightColor: "transparent" }}>{m.icon}{m.label}</button>;
+          })}
+        </div>
+        {attended && <div style={{ marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.accent, fontSize: 12, fontWeight: 700, marginBottom: 10 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
+            {venue ? venue + "'de izledin — koleksiyonuna eklenecek" : "Statta izledin — koleksiyonuna eklenecek"}</div>
+          <input ref={photoInput} type="file" accept="image/*" onChange={onPickPhoto} style={{ display: "none" }} />
+          {photoPrev
+            ? <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: "1px solid " + COLORS.border }}>
+                <img src={photoPrev} alt="" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />
+                <button onClick={clearPhoto} aria-label="fotoğrafı kaldır" style={{ position: "absolute", top: 8, right: 8, width: 30, height: 30, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+              </div>
+            : <button onClick={function(){ if (photoInput.current) photoInput.current.click(); }} style={{ width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: "1px dashed " + COLORS.border, background: "transparent", color: COLORS.textSecondary, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+                Staddan fotoğraf ekle</button>}
+        </div>}
         {/* 1 — rate the match (same 0-10 slider as players) */}
         <div style={{ marginBottom: 22 }}>
           <div style={head}>Maçı puanla</div>
@@ -3167,7 +3206,7 @@ function MatchRatingDist({ match, action }) {
 }
 
 // Post-match entry point shown at the top of a finished match: the log CTA or the user's log summary.
-function MatchLogCard({ match, lineups, t }) {
+function MatchLogCard({ match, lineups, venue, t }) {
   var [log, setLog] = useState(undefined); // undefined = loading, null = none, obj = exists
   var [open, setOpen] = useState(false);
   var [uid, setUid] = useState(null);
@@ -3196,9 +3235,9 @@ function MatchLogCard({ match, lineups, t }) {
         color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Logla</button>;
   return <div style={{ marginBottom: 14, background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 16, padding: "12px 15px" }}>
     <MatchRatingDist match={match} action={action} />
-    {open && <MatchLogSheet match={match} lineups={lineups} existing={log} t={t}
+    {open && <MatchLogSheet match={match} lineups={lineups} venue={venue} existing={log} t={t}
       onClose={function(){ setOpen(false); }}
-      onSaved={function(res){ setLog(Object.assign({}, log || {}, { rating: res.rating, tags: res.tags })); }}
+      onSaved={function(res){ setLog(Object.assign({}, log || {}, { rating: res.rating, tags: res.tags, attended: res.attended, venue: res.venue })); }}
       onDeleted={function(){ setLog(null); }} />}
   </div>;
 }
@@ -3248,6 +3287,7 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
   var [visible, setVisible] = useState(false);
   var [players, setPlayers] = useState(null);
   var [deleting, setDeleting] = useState(false);
+  var drag = useSheetDrag(function(){ close(); });
   useEffect(function(){
     var id = requestAnimationFrame(function(){ setVisible(true); });
     var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
@@ -3258,20 +3298,37 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
   if (typeof document === "undefined") return null;
   return createPortal(<div onClick={close}
     onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
-    style={{ position: "fixed", inset: 0, zIndex: 1370, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
-    <div onClick={function(e){ e.stopPropagation(); }} style={{ width: "100%", maxWidth: 440, maxHeight: "80vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
+    style={{ position: "fixed", inset: 0, zIndex: 1370, background: "rgba(0,0,0,0.42)", backdropFilter: "blur(9px)", WebkitBackdropFilter: "blur(9px)",
+      display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
+    {/* match identity above the sheet, on the blurred backdrop */}
+    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, maxWidth: "100%" }}>
+        <TeamLogo src={match.homeLogo} name={match.home} size={22} />
+        <span style={{ color: "#fff", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 100 }}>{locTeam(match.home, t)}</span>
+        <span style={{ color: "#fff", fontSize: 17, fontWeight: 800, flexShrink: 0, padding: "0 2px" }}>{match.score || "-"}</span>
+        <span style={{ color: "#fff", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 100 }}>{locTeam(match.away, t)}</span>
+        <TeamLogo src={match.awayLogo} name={match.away} size={22} />
+      </div>
+    </div>
+    <div onClick={function(e){ e.stopPropagation(); }}
+      onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
+      style={{ width: "100%", maxWidth: 440, maxHeight: "72vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
       borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
-      transform: visible ? "translateY(0)" : "translateY(100%)", transition: "transform 0.32s cubic-bezier(0.22,1,0.36,1)",
+      transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)",
+      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
       padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
       <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <span style={{ color: COLORS.textPrimary, fontSize: 15, fontWeight: 800 }}>{log.own ? "Senin logun" : "@" + log.user}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>maç</span>
           <span style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800 }}>{log.rating.toFixed(1)}</span>
         </div>
       </div>
-      {(match.home || match.away) && <div style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{locTeam(match.home, t)} - {locTeam(match.away, t)}</div>}
+      {log.attended && <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.accent, fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
+        {log.venue || "Statta izledi"}</div>}
+      {log.photo && <img src={log.photo} alt="" style={{ width: "100%", maxHeight: 240, objectFit: "cover", borderRadius: 14, marginBottom: 14, display: "block", border: "1px solid " + COLORS.border }} />}
       {log.tags && log.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
         {log.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{f ? f.label : id}</span>; })}
       </div>}
@@ -3292,6 +3349,31 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
         {deleting ? "Siliniyor…" : "Logu sil"}</button>}
     </div>
   </div>, document.body);
+}
+
+// A rich log row: crest–score–crest, the user's star rating, tags, venue + date.
+function LogCard({ g, t, lang, onClick }) {
+  return <div onClick={onClick} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border, cursor: onClick ? "pointer" : "default", WebkitTapHighlightColor: "transparent" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <TeamLogo src={g.home_logo} name={g.home} size={20} />
+      <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.home, t)}</span>
+      <span style={{ flexShrink: 0, minWidth: 46, textAlign: "center", color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>{g.score || "-"}</span>
+      <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.away, t)}</span>
+      <TeamLogo src={g.away_logo} name={g.away} size={20} />
+    </div>
+    {g.tags && g.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+      {g.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{f ? f.label : id}</span>; })}
+    </div>}
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 12, fontWeight: 800 }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.27l-5.9 3.09 1.13-6.58L2.45 9.14l6.6-.96z" /></svg>
+        {Number(g.rating).toFixed(1)}</span>
+      {g.attended && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: COLORS.accent, fontSize: 11, fontWeight: 700, minWidth: 0 }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{g.venue || "Statta"}</span></span>}
+      <span style={{ marginLeft: "auto", flexShrink: 0, color: COLORS.textMuted, fontSize: 11, fontWeight: 600 }}>{relTime(g.created_at, lang)}</span>
+    </div>
+  </div>;
 }
 
 // Clickable @username → opens that user's public profile. stopPropagation so it doesn't also fire
@@ -3356,16 +3438,7 @@ function UserProfileSheet({ userId, username, t, onClose }) {
           {tab === "logs"
             ? (logs === null ? <SkeletonRows rows={3} card={false} />
                 : logs.length > 0
-                  ? logs.map(function(g){
-                      return <div key={g.id} onClick={function(){ setLogView(g); }} style={Object.assign({ cursor: "pointer", WebkitTapHighlightColor: "transparent" }, box)}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: (g.tags && g.tags.length) ? 8 : 0 }}>
-                          <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.home, t)} - {locTeam(g.away, t)}</span>
-                          <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{Number(g.rating).toFixed(1)}</span>
-                        </div>
-                        {g.tags && g.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {g.tags.map(function(id){ return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{tagLbl(id)}</span>; })}
-                        </div>}
-                      </div>; })
+                  ? logs.map(function(g){ return <LogCard key={g.id} g={g} t={t} lang={lang} onClick={function(){ setLogView(g); }} />; })
                   : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok.</div>)
             : (comments === null ? <SkeletonRows rows={3} card={false} />
                 : comments.length > 0
@@ -3384,8 +3457,8 @@ function UserProfileSheet({ userId, username, t, onClose }) {
       </div>
     </div>
   </div>
-  {logView && <RatingDetailSheet match={{ id: logView.match_id, home: logView.home, away: logView.away }}
-    log={{ userId: userId, own: false, user: username, rating: Number(logView.rating), tags: logView.tags }}
+  {logView && <RatingDetailSheet match={{ id: logView.match_id, home: logView.home, away: logView.away, homeLogo: logView.home_logo, awayLogo: logView.away_logo, score: logView.score }}
+    log={{ userId: userId, own: false, user: username, rating: Number(logView.rating), tags: logView.tags, attended: logView.attended, venue: logView.venue, photo: logView.photo }}
     t={t} onClose={function(){ setLogView(null); }} />}
   </>, document.body);
 }
@@ -4153,6 +4226,7 @@ function SearchResults({ teams, matches, players, searching, isF1, t, onOpenMatc
 function PlayerModal({ player, t, onClose }) {
   var [visible, setVisible] = useState(false);
   var [data, setData] = useState(null);
+  var [games, setGames] = useState(null); // last matches with the rating earned
   var [loading, setLoading] = useState(true);
 
   useEffect(function(){
@@ -4163,8 +4237,14 @@ function PlayerModal({ player, t, onClose }) {
     window.addEventListener("keydown", onKey);
     fetch("/api/football?mode=player&id=" + player.id + "&season=2025")
       .then(function(r){ return r.json(); })
-      .then(function(j){ setData(j.player || null); setLoading(false); })
-      .catch(function(){ setData(null); setLoading(false); });
+      .then(function(j){
+        var pl = j.player || null; setData(pl); setLoading(false);
+        if (pl && pl.teamId && pl.id != null) {
+          fetch("/api/football?mode=playergames&id=" + pl.id + "&team=" + pl.teamId + "&season=2025")
+            .then(function(r){ return r.json(); }).then(function(g){ setGames((g && g.games) || []); }).catch(function(){ setGames([]); });
+        } else setGames([]);
+      })
+      .catch(function(){ setData(null); setLoading(false); setGames([]); });
     return function(){
       cancelAnimationFrame(r);
       document.body.style.overflow = prev;
@@ -4253,6 +4333,21 @@ function PlayerModal({ player, t, onClose }) {
               {statCard(t.plRating, totals.rating != null ? totals.rating.toFixed(2) : "-")}
               {statCard(t.plTrophies, pd.trophiesWon != null ? pd.trophiesWon : 0, true)}
             </div>
+
+            {games && games.length > 0 && <div style={{ marginBottom: 18 }}>
+              <div style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Son maçlar</div>
+              {games.map(function(gm, i){
+                var resCol = gm.result === "W" ? COLORS.purple : gm.result === "L" ? COLORS.red : COLORS.yellow;
+                return <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", marginBottom: 6, background: COLORS.card, borderRadius: 12 }}>
+                  {gm.result && <span style={{ width: 16, textAlign: "center", color: resCol, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{gm.result}</span>}
+                  {gm.opponentLogo && <img src={gm.opponentLogo} alt="" style={{ width: 20, height: 20, objectFit: "contain", flexShrink: 0 }} />}
+                  <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <span style={{ color: COLORS.textMuted, fontWeight: 700 }}>{gm.home ? "" : "@"}</span>{locTeam(gm.opponent, t)}</span>
+                  <span style={{ color: COLORS.textSecondary, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{gm.score}</span>
+                  {gm.rating != null ? <RatingBadge rating={gm.rating} style={{ minWidth: 0, padding: "1px 6px" }} /> : <span style={{ color: COLORS.textMuted, fontSize: 11, flexShrink: 0, width: 26, textAlign: "center" }}>–</span>}
+                </div>;
+              })}
+            </div>}
 
             <div style={{ marginBottom: 18 }}>
               {pd.nationality && <StatRow label={t.plNationality} value={pd.nationality} />}
@@ -4482,6 +4577,7 @@ function SimplePage({ title, onBack, t, children }) {
 function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
   var [tab, setTab] = useState("coupons"); // "coupons" | "board"
   var [mine, setMine] = useState(null);    // { items, points, played }
+  var [loggedIds, setLoggedIds] = useState(null); // Set of match_ids the user has already logged
   var [scope, setScope] = useState("weekly"); // "weekly" | "season" | <leagueId>
   var [board, setBoard] = useState(null);
   var [uid, setUid] = useState(null);
@@ -4499,6 +4595,7 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
     fetch("/api/predict/score").catch(function(){}).finally(function(){
       fetchMyPredictions(60).then(function(r){ setMine(r || { items: [], points: 0, played: 0 }); }).catch(function(){ setMine({ items: [], points: 0, played: 0 }); });
     });
+    fetchMyLogs(200).then(function(l){ setLoggedIds(new Set((l || []).map(function(x){ return String(x.match_id); }))); }).catch(function(){ setLoggedIds(new Set()); });
     loadLeagues();
   }, [loggedIn]);
 
@@ -4577,7 +4674,32 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
             ? <SkeletonRows rows={4} avatar={false} />
             : mine.items.length === 0
               ? <EmptyState icon={<EmptyIcon name="coupon" />} title="Henüz kupon yok" hint="Bir maça gir, 1X2 + maçın adamı + oyuncu reytinglerini tahmin et; tuttukça itibar kazan." />
-              : <div>{mine.items.map(function(row){ return <CouponRow key={row.id} row={row} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(row.meta || { id: row.match_id }); }} onDelete={function(){ deleteCoupon(row); }} />; })}</div>)
+              : <div>
+                  {/* loop-closer: predicted matches that finished but you haven't logged yet */}
+                  {(function(){
+                    if (!loggedIds) return null;
+                    var pending = mine.items.filter(function(x){ return x.scored && !loggedIds.has(String(x.match_id)); });
+                    if (!pending.length) return null;
+                    return <div style={{ marginBottom: 18 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "6px 2px 8px" }}>
+                        <span style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>Loglamayı bekliyor</span>
+                        <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>{pending.length}</span>
+                      </div>
+                      <div style={{ background: COLORS.glassPurple, border: "1px solid " + COLORS.glassBorder, borderRadius: 16, overflow: "hidden" }}>
+                        {pending.slice(0, 6).map(function(row, i){
+                          var m = row.meta || {};
+                          return <div key={row.id} onClick={function(){ if (onOpenMatch) onOpenMatch(row.meta || { id: row.match_id }); }}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", cursor: "pointer", borderTop: i ? "1px solid " + COLORS.glassBorder : "none", WebkitTapHighlightColor: "transparent" }}>
+                            <TeamLogo src={m.homeLogo} name={m.home} size={18} />
+                            <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(m.home, t)} - {locTeam(m.away, t)}</span>
+                            <span style={{ flexShrink: 0, padding: "5px 13px", borderRadius: 999, background: COLORS.accent, color: "#fff", fontSize: 12, fontWeight: 800 }}>Logla</span>
+                          </div>;
+                        })}
+                      </div>
+                    </div>;
+                  })()}
+                  {mine.items.map(function(row){ return <CouponRow key={row.id} row={row} t={t} onOpen={function(){ if (onOpenMatch) onOpenMatch(row.meta || { id: row.match_id }); }} onDelete={function(){ deleteCoupon(row); }} />; })}
+                </div>)
         : <div>
             {/* scope chips: weekly / season / my leagues */}
             <div className="mo-scroll" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 12 }}>
@@ -4747,7 +4869,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var favPlayers = favRecs.filter(function(r){ return r.kind === "player"; });
   var [my, setMy] = useState({ count: 0, items: [] });
   var [logs, setLogs] = useState(null);
-  var [act, setAct] = useState("comments"); // activities toggle: "comments" | "logs"
+  var [scout, setScout] = useState(null); // most-analysed players
+  var [act, setAct] = useState("logs"); // activities toggle: "logs" | "comments"
   var [logView, setLogView] = useState(null); // a log row opened in the detail sheet
   var [username, setUsername] = useState(null);
   var [editing, setEditing] = useState(false);
@@ -4756,7 +4879,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   useEffect(function(){
     var cancelled = false;
     fetchMyComments(20).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
-    fetchMyLogs(40).then(function(res){ if (!cancelled) setLogs(res || []); }).catch(function(){ if (!cancelled) setLogs([]); });
+    fetchMyLogs(40).then(function(res){ return backfillLogLogos(res || []); }).then(function(res){ if (!cancelled) setLogs(res); }).catch(function(){ if (!cancelled) setLogs([]); });
+    fetchMyRatedPlayers(24).then(function(res){ if (!cancelled) setScout(res || []); }).catch(function(){ if (!cancelled) setScout([]); });
     fetchMyUsername().then(function(u){ if (!cancelled && u) setUsername(u); }).catch(function(){});
     return function(){ cancelled = true; };
   }, []);
@@ -4854,6 +4978,51 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
         {/* Football DNA — your rating/prediction fingerprint */}
         <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Taste Graph</div><FootballDNA t={t} /></div>
 
+        {/* Passport: collections earned from logs (stadiums attended, competitions, teams) */}
+        {(function(){
+          var lg = logs || [];
+          if (lg.length === 0) return null;
+          var venues = {}, comps = {}, teams = {};
+          lg.forEach(function(g){ if (g.attended && g.venue) venues[g.venue] = 1; if (g.league) comps[g.league] = 1; if (g.home) teams[locTeam(g.home, t)] = 1; if (g.away) teams[locTeam(g.away, t)] = 1; });
+          var stadiums = Object.keys(venues);
+          var cols = [{ n: stadiums.length, l: "Stadyum" }, { n: Object.keys(comps).length, l: "Turnuva" }, { n: Object.keys(teams).length, l: "Takım" }];
+          return <div style={{ marginBottom: 22 }}>
+            <div style={sectionLabel}>Pasaport</div>
+            <div style={{ background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 18, padding: "16px 6px" }}>
+              <div style={{ display: "flex" }}>
+                {cols.map(function(c, i){ return <div key={i} style={{ flex: 1, textAlign: "center", borderLeft: i ? "1px solid " + COLORS.border : "none" }}>
+                  <div style={{ color: COLORS.accent, fontSize: 20, fontWeight: 800 }}>{c.n}</div>
+                  <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 3 }}>{c.l}</div>
+                </div>; })}
+              </div>
+              {stadiums.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "14px 10px 2px" }}>
+                {stadiums.slice(0, 14).map(function(v, i){ return <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                  {v}</span>; })}
+              </div>}
+            </div>
+          </div>;
+        })()}
+
+        {/* Scout: players you've analysed most (from your ratings) */}
+        {scout && scout.length > 0 && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>Scout · en çok analiz</div>
+          <div className="mo-scroll" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+            {scout.map(function(p){
+              var photo = "https://media.api-sports.io/football/players/" + p.id + ".png";
+              return <div key={p.id} onClick={function(){ if (onOpenPlayer) onOpenPlayer({ ref_id: p.id, name: p.name, image: photo }); }}
+                style={{ flexShrink: 0, width: 72, cursor: "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" }}>
+                <div style={{ position: "relative", width: 60, height: 60, margin: "0 auto 6px" }}>
+                  <img src={photo} alt="" onError={function(e){ e.currentTarget.style.visibility = "hidden"; }}
+                    style={{ width: 60, height: 60, borderRadius: "50%", objectFit: "cover", background: COLORS.cardAlt, border: "1px solid " + COLORS.border }} />
+                  <RatingBadge rating={p.avg} style={{ position: "absolute", bottom: -4, left: "50%", transform: "translateX(-50%)", fontSize: 10, minWidth: 0, padding: "1px 6px", borderRadius: 6 }} />
+                </div>
+                <div style={{ color: COLORS.textSecondary, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(p.name)}</div>
+                <div style={{ color: COLORS.accent, fontSize: 10, fontWeight: 800, marginTop: 1 }}>{p.n} analiz</div>
+              </div>; })}
+          </div>
+        </div>}
+
         {/* favorites */}
         {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
         {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favPlayers}</div>{favStrip(favPlayers, "player")}</div>}
@@ -4866,7 +5035,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
         <div style={{ marginBottom: 8 }}>
           <div style={sectionLabel}>Aktiviteler</div>
           <UnderlineTabs indicatorColor={COLORS.accent} active={act} onChange={setAct}
-            tabs={[{ id: "comments", label: "Yorumlar" }, { id: "logs", label: "Loglar" }]} />
+            tabs={[{ id: "logs", label: "Loglar" }, { id: "comments", label: "Yorumlar" }]} />
           <div style={{ marginTop: 12 }}>
             {act === "comments"
               ? (my.items.length > 0
@@ -4885,24 +5054,14 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
               : (logs === null
                   ? <SkeletonRows rows={4} card={false} />
                   : logs.length > 0
-                    ? logs.map(function(g){
-                        return <div key={g.id} onClick={function(){ setLogView(g); }} style={{ padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: (g.tags && g.tags.length) ? 8 : 0 }}>
-                            <span style={{ flex: 1, minWidth: 0, color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{locTeam(g.home, t)} - {locTeam(g.away, t)}</span>
-                            <span style={{ color: COLORS.accent, fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{Number(g.rating).toFixed(1)}</span>
-                          </div>
-                          {g.tags && g.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                            {g.tags.map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return <span key={id} style={{ padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>{f ? f.label : id}</span>; })}
-                          </div>}
-                          <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 7 }}>{relTime(g.created_at, lang)}</div>
-                        </div>; })
+                    ? logs.map(function(g){ return <LogCard key={g.id} g={g} t={t} lang={lang} onClick={function(){ setLogView(g); }} />; })
                     : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok — biten bir maça girip logla.</div>)}
           </div>
         </div>
 
         {logView && <RatingDetailSheet
-          match={{ id: logView.match_id, home: logView.home, away: logView.away }}
-          log={{ userId: (session && session.user && session.user.id), own: true, rating: Number(logView.rating), tags: logView.tags }}
+          match={{ id: logView.match_id, home: logView.home, away: logView.away, homeLogo: logView.home_logo, awayLogo: logView.away_logo, score: logView.score }}
+          log={{ userId: (session && session.user && session.user.id), own: true, rating: Number(logView.rating), tags: logView.tags, attended: logView.attended, venue: logView.venue, photo: logView.photo }}
           t={t}
           onClose={function(){ setLogView(null); }}
           onDelete={function(){ return deleteMatchLog(logView.match_id).then(function(){ setLogs(function(cur){ return (cur || []).filter(function(x){ return x.id !== logView.id; }); }); }); }} />}

@@ -285,6 +285,23 @@ export async function fetchUserRatingProfile(userId) {
     avg_diff: r.avg_diff != null ? Number(r.avg_diff) : null, avg_absdiff: r.avg_absdiff != null ? Number(r.avg_absdiff) : null };
 }
 
+// Players this user has rated the most — the Scout collection (count + avg per player).
+export async function fetchMyRatedPlayers(limit) {
+  const uid = await getUserId();
+  if (!uid) return [];
+  const { data } = await supabase.from("ratings").select("target_id, target_name, rating")
+    .eq("user_id", uid).eq("target_type", "player").limit(2000);
+  const map = {};
+  (data || []).forEach(function (r) {
+    const k = String(r.target_id);
+    if (!map[k]) map[k] = { id: k, name: r.target_name, n: 0, sum: 0 };
+    map[k].n += 1; map[k].sum += Number(r.rating);
+  });
+  const arr = Object.keys(map).map(function (k) { return { id: map[k].id, name: map[k].name, n: map[k].n, avg: map[k].sum / map[k].n }; });
+  arr.sort(function (a, b) { return b.n - a.n || b.avg - a.avg; });
+  return arr.slice(0, limit || 30);
+}
+
 // This user's own player ratings for a match (target_id -> {rating, name}).
 export async function fetchMyMatchRatings(matchId) {
   const uid = await getUserId();
@@ -364,8 +381,14 @@ export async function saveMatchLog(opts) {
     rating: opts.rating,
     tags: opts.tags || [],
     players: opts.players || [],
+    attended: !!opts.attended,
+    venue: opts.attended ? (opts.venue || null) : null,
+    photo: opts.attended ? (opts.photo || null) : null,
     home: opts.home || null,
     away: opts.away || null,
+    home_logo: opts.homeLogo || null,
+    away_logo: opts.awayLogo || null,
+    score: opts.score || null,
     league: opts.league || null,
     match_ts: opts.matchTs || null,
   }, { onConflict: "user_id,match_id" });
@@ -397,6 +420,30 @@ export async function fetchUserComments(userId, limit) {
   return data || [];
 }
 
+// Backfill crest/score onto older logs that were saved before those columns existed (own logs only).
+// Fetches the fixtures' crests once, persists them, and returns the enriched list for immediate render.
+export async function backfillLogLogos(logs) {
+  const uid = await getUserId();
+  const missing = (logs || []).filter(function (l) { return !l.home_logo && l.match_id; });
+  if (!uid || !missing.length) return logs;
+  const ids = Array.from(new Set(missing.map(function (l) { return String(l.match_id); }))).slice(0, 20);
+  try {
+    const res = await fetch("/api/football?mode=fixturemeta&ids=" + ids.join(","));
+    const j = await res.json();
+    const meta = (j && j.meta) || {};
+    const updates = [];
+    logs.forEach(function (l) {
+      const m = meta[String(l.match_id)];
+      if (m && !l.home_logo) {
+        l.home_logo = m.homeLogo; l.away_logo = m.awayLogo; if (!l.score) l.score = m.score;
+        updates.push(supabase.from("match_logs").update({ home_logo: m.homeLogo, away_logo: m.awayLogo, score: l.score }).eq("user_id", uid).eq("match_id", String(l.match_id)));
+      }
+    });
+    await Promise.all(updates);
+  } catch (e) {}
+  return logs;
+}
+
 // This user's logged matches, newest first — the diary / Taste-Graph source.
 export async function fetchMyLogs(limit) {
   const uid = await getUserId();
@@ -404,6 +451,18 @@ export async function fetchMyLogs(limit) {
   const { data } = await supabase.from("match_logs").select("*")
     .eq("user_id", uid).order("created_at", { ascending: false }).limit(limit || 80);
   return data || [];
+}
+
+// Upload one stadium photo for a log → returns its public URL. Path is user-scoped for RLS.
+export async function uploadLogPhoto(matchId, file) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const ext = ((file && file.name && file.name.split(".").pop()) || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = uid + "/" + String(matchId) + "-" + Date.now() + "." + ext;
+  const up = await supabase.storage.from("log-photos").upload(path, file, { upsert: true, contentType: (file && file.type) || "image/jpeg" });
+  if (up.error) return { error: up.error };
+  const { data } = supabase.storage.from("log-photos").getPublicUrl(path);
+  return { url: (data && data.publicUrl) || null };
 }
 
 // Delete this user's whole log for a match — the match_log AND its player ratings (nothing orphaned).
@@ -418,7 +477,7 @@ export async function deleteMatchLog(matchId) {
 
 // Everyone's match logs for one match (public read), newest first, with usernames — the Ratings tab.
 export async function fetchMatchLogs(matchId) {
-  const { data } = await supabase.from("match_logs").select("user_id, rating, tags, created_at")
+  const { data } = await supabase.from("match_logs").select("user_id, rating, tags, attended, venue, photo, created_at")
     .eq("match_id", String(matchId)).order("created_at", { ascending: false }).limit(120);
   const rows = data || [];
   if (!rows.length) return [];
@@ -427,7 +486,8 @@ export async function fetchMatchLogs(matchId) {
   const nameById = {};
   (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
   return rows.map(function (r) {
-    return { userId: r.user_id, user: nameById[r.user_id] || "kullanıcı", rating: Number(r.rating), tags: r.tags || [], created_at: r.created_at };
+    return { userId: r.user_id, user: nameById[r.user_id] || "kullanıcı", rating: Number(r.rating), tags: r.tags || [],
+      attended: !!r.attended, venue: r.venue || null, photo: r.photo || null, created_at: r.created_at };
   });
 }
 
