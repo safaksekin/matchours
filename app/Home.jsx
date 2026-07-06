@@ -1966,12 +1966,12 @@ function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments
   if (!isF1) tabs.push({ id: "h2h", label: t.h2hLabel });
   if (!isF1) tabs.push({ id: "scorers", label: t.scorers });
   if (s.channels.length > 0) tabs.push({ id: "tv", label: t.tv });
-  if (!isF1 && match.status === "finished") tabs.push({ id: "ratings", label: "Ratingler" });
+  if (!isF1 && (match.status === "finished" || match.status === "live")) tabs.push({ id: "ratings", label: "Ratingler" });
   tabs.push({ id: "comments", label: t.comments });
 
   return <div style={{ background: "transparent", padding: "14px 18px 18px",
     }}>
-    {!isF1 && match.status === "finished" && <MatchLogCard match={match} lineups={detail && detail.lineups} venue={s.stadium} t={t} />}
+    {!isF1 && (match.status === "finished" || match.status === "live") && <MatchLogCard match={match} lineups={detail && detail.lineups} venue={s.stadium} t={t} />}
     <div style={{ marginBottom: 12 }}>
       <UnderlineTabs indicatorColor={COLORS.accent} tabs={tabs} active={tab} onChange={setTab} />
     </div>
