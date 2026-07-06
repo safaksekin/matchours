@@ -25,6 +25,31 @@ export async function updateUsername(username) {
   return { error: error || null };
 }
 
+// ── Avatars (profile photo) ─────────────────────────────────────────────────
+export async function fetchMyAvatar() {
+  const uid = await getUserId();
+  if (!uid) return null;
+  const { data } = await supabase.from("profiles").select("avatar_url").eq("id", uid).maybeSingle();
+  return data ? data.avatar_url : null;
+}
+export async function fetchUserAvatar(userId) {
+  if (!userId) return null;
+  const { data } = await supabase.from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
+  return data ? data.avatar_url : null;
+}
+// Upload a (already downscaled + 1:1-cropped) JPEG blob and persist its URL on the profile.
+export async function uploadAvatar(blob) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const path = uid + "/avatar-" + Date.now() + ".jpg";
+  const up = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+  if (up.error) return { error: up.error };
+  const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+  const url = (data && data.publicUrl) || null;
+  await supabase.from("profiles").update({ avatar_url: url }).eq("id", uid);
+  return { url: url };
+}
+
 // The signed-in user's own comments (+ total count) for the profile page.
 export async function fetchMyComments(limit) {
   const uid = await getUserId();

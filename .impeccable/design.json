@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-05T00:00:00Z",
+  "title": "Design System: fikstür.com",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Electric Purple", "canonical": "oklch(0.53 0.20 285)", "tonalRamp": ["oklch(0.20 0.10 285)","oklch(0.28 0.14 285)","oklch(0.36 0.17 285)","oklch(0.44 0.19 285)","oklch(0.53 0.20 285)","oklch(0.66 0.16 285)","oklch(0.80 0.10 285)","oklch(0.93 0.04 285)"] },
+      "success": { "role": "tertiary", "displayName": "Rating Green (code: --purple)", "canonical": "oklch(0.78 0.17 152)", "tonalRamp": ["oklch(0.24 0.06 152)","oklch(0.34 0.09 152)","oklch(0.45 0.12 152)","oklch(0.56 0.15 152)","oklch(0.67 0.17 152)","oklch(0.78 0.17 152)","oklch(0.88 0.10 152)","oklch(0.95 0.04 152)"] },
+      "warn": { "role": "tertiary", "displayName": "Rating Yellow", "canonical": "oklch(0.90 0.17 100)", "tonalRamp": ["oklch(0.30 0.06 100)","oklch(0.42 0.09 100)","oklch(0.54 0.12 100)","oklch(0.66 0.15 100)","oklch(0.78 0.17 100)","oklch(0.90 0.17 100)","oklch(0.95 0.10 100)","oklch(0.98 0.04 100)"] },
+      "danger": { "role": "tertiary", "displayName": "Rating Red", "canonical": "oklch(0.63 0.26 29)", "tonalRamp": ["oklch(0.25 0.10 29)","oklch(0.35 0.15 29)","oklch(0.45 0.20 29)","oklch(0.55 0.24 29)","oklch(0.63 0.26 29)","oklch(0.74 0.20 29)","oklch(0.86 0.11 29)","oklch(0.95 0.04 29)"] },
+      "surface": { "role": "neutral", "displayName": "Surface (dark / light)", "canonical": "oklch(0.25 0.005 300)", "tonalRamp": ["oklch(0.13 0.004 300)","oklch(0.20 0.005 300)","oklch(0.27 0.006 300)","oklch(0.40 0.006 285)","oklch(0.55 0.01 285)","oklch(0.72 0.02 280)","oklch(0.88 0.01 280)","oklch(0.97 0.004 280)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Big numerals: modal scores, reputation/rating values." },
+      "headline": { "displayName": "Headline", "purpose": "Page/section titles." },
+      "title": { "displayName": "Title", "purpose": "Team names, card emphasis." },
+      "body": { "displayName": "Body", "purpose": "Match rows, comments, prose (≤70ch)." },
+      "label": { "displayName": "Label", "purpose": "Uppercase card eyebrows and micro meta." }
+    },
+    "shadows": [
+      { "name": "sheet", "value": "0 -8px 40px rgba(20,40,40,0.22)", "purpose": "Bottom sheets rising from the bottom edge." },
+      { "name": "popover", "value": "0 12px 36px rgba(20,40,40,0.30)", "purpose": "Notification dropdown, AI popover, portaled menus." },
+      { "name": "header-light", "value": "0 3px 14px rgba(0,0,0,0.18)", "purpose": "Light-mode purple header lift over scrolling content." }
+    ],
+    "motion": [
+      { "name": "ease-out-quint", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Default easing for slides, sheets, underline." },
+      { "name": "dur-fast", "value": "0.2s", "purpose": "Hover/tint state changes." },
+      { "name": "dur-base", "value": "0.3s", "purpose": "Tab/underline transitions." },
+      { "name": "dur-sheet", "value": "0.34s", "purpose": "Bottom-sheet slide-up." }
+    ],
+    "breakpoints": [
+      { "name": "mobile-search", "value": "600px" },
+      { "name": "desktop", "value": "900px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The commit action (save coupon, sign in). Flat purple fill, never beveled.",
+      "html": "<button class=\"ds-btn-primary\">Kuponu Kaydet</button>",
+      "css": ".ds-btn-primary{background:#6A45E6;color:#fff;border:none;border-radius:12px;padding:10px 16px;font:800 14px/1 Manrope,'Helvetica Neue',sans-serif;cursor:pointer;transition:filter .2s}.ds-btn-primary:hover{filter:brightness(1.06)}.ds-btn-primary:focus-visible{outline:2px solid #6A45E6;outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary/dismiss action. Transparent, 1px border, muted text.",
+      "html": "<button class=\"ds-btn-ghost\">Kapat</button>",
+      "css": ".ds-btn-ghost{background:transparent;color:#A8AECE;border:1px solid #34343A;border-radius:12px;padding:9px 14px;font:700 13px/1 Manrope,'Helvetica Neue',sans-serif;cursor:pointer;transition:color .2s,border-color .2s}.ds-btn-ghost:hover{color:#E8EAFB;border-color:#4a4a52}"
+    },
+    {
+      "name": "1X2 Result Boxes",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "Signature outcome row: your pick gets a 2.5px purple border; the actual result gets a green fill.",
+      "html": "<div class=\"ds-1x2\"><span class=\"ds-1x2-box\">1</span><span class=\"ds-1x2-box ds-1x2-pick\">X</span><span class=\"ds-1x2-box ds-1x2-actual\">2</span></div>",
+      "css": ".ds-1x2{display:flex;gap:8px;font-family:Manrope,'Helvetica Neue',sans-serif}.ds-1x2-box{flex:1;text-align:center;padding:10px 0;border:1px solid #34343A;border-radius:11px;background:#1B1B1F;color:#E8EAFB;font-weight:800;font-size:16px}.ds-1x2-pick{border:2.5px solid #6A45E6}.ds-1x2-actual{background:rgba(47,174,85,0.18);color:#3FD176;border-color:transparent}"
+    },
+    {
+      "name": "Feed Card / Row",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat surface row; separation is tonal, hover paints a faint purple tint. No shadow.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Kanada - Fas</div><div class=\"ds-card-sub\">Champions League · 22:00</div></div>",
+      "css": ".ds-card{background:#1B1B1F;border-radius:16px;padding:14px 16px;font-family:Manrope,'Helvetica Neue',sans-serif;cursor:pointer;transition:background .3s}.ds-card:hover{background:rgba(106,69,230,0.10)}.ds-card-title{color:#E8EAFB;font-weight:800;font-size:14px}.ds-card-sub{color:#767C9E;font-size:11px;margin-top:3px}"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Surface-alt fill, purple focus border, muted placeholder (must clear 4.5:1).",
+      "html": "<input class=\"ds-input\" placeholder=\"Oyuncu ara…\">",
+      "css": ".ds-input{background:#26262B;color:#E8EAFB;border:1px solid #34343A;border-radius:12px;padding:9px 13px;font:600 13px Manrope,'Helvetica Neue',sans-serif;outline:none;width:220px;box-sizing:border-box;transition:border-color .2s}.ds-input::placeholder{color:#767C9E}.ds-input:focus{border-color:rgba(106,69,230,0.66)}"
+    },
+    {
+      "name": "Sport Tab",
+      "kind": "nav",
+      "refersTo": "button-ghost",
+      "description": "Top category tab: icon + label, sliding purple underline on active, soft hover box.",
+      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab ds-tab-on\">Futbol<span class=\"ds-tab-ul\"></span></button><button class=\"ds-tab\">Basketbol</button></div>",
+      "css": ".ds-tabs{display:flex;gap:2px;font-family:Manrope,'Helvetica Neue',sans-serif}.ds-tab{position:relative;background:transparent;border:none;border-radius:16px;padding:12px 16px 9px;font-size:11px;font-weight:600;color:#A8AECE;cursor:pointer;transition:background .2s,color .2s}.ds-tab:hover{background:rgba(128,128,145,0.16)}.ds-tab-on{color:#6A45E6;font-weight:700}.ds-tab-ul{position:absolute;left:22%;bottom:2px;width:56%;height:3px;border-radius:3px;background:#6A45E6}"
+    },
+    {
+      "name": "Notification Item",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Portaled dropdown row (must escape .mo-navlight): icon chip + descriptive sentence, points in purple.",
+      "html": "<div class=\"ds-notif\"><span class=\"ds-notif-ic\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0zM7 4H4v2a3 3 0 0 0 3 3M17 4h3v2a3 3 0 0 1-3 3\"/></svg></span><div class=\"ds-notif-tx\"><div class=\"ds-notif-t\">Kanada - Fas</div><div class=\"ds-notif-s\">maçındaki tahminlerinden <b>+5 puan</b> kazandın</div></div></div>",
+      "css": ".ds-notif{display:flex;align-items:center;gap:11px;padding:11px 14px;background:#1B1B1F;font-family:Manrope,'Helvetica Neue',sans-serif;cursor:pointer}.ds-notif-ic{width:34px;height:34px;border-radius:10px;background:rgba(106,69,230,0.18);color:#6A45E6;display:flex;align-items:center;justify-content:center;flex-shrink:0}.ds-notif-t{color:#E8EAFB;font-size:13px;font-weight:700}.ds-notif-s{color:#A8AECE;font-size:11.5px;margin-top:1px}.ds-notif-s b{color:#6A45E6}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Football Passport",
+    "overview": "fikstür.com is not a scoreboard you read; it's a passport you fill. Every surface exists to let a fan take a position — predict a result, call the man of the match, rate a player — and carry away a growing football identity. The visual system is deliberately flat and confident: solid dark-or-light canvases, generous rounding, and a single electric purple acting as the commitment stamp. Playfulness lives in the mechanics and copy (points, DNA, leaderboards), never in shiny chrome. It sits between a spreadsheet and a toy: a serious, opinionated football companion that keeps score.",
+    "keyCharacteristics": [
+      "Flat, solid surfaces; depth via tonal layers, not shadow.",
+      "One electric purple accent as a commitment stamp (≤ a fifth of any screen).",
+      "Dual light/dark themes, both first-class, driven by CSS variables.",
+      "Single neo-grotesque sans in many weights; numbers and ratings are protagonists.",
+      "Purple is the brand; green/yellow/red are a separate, functional rating scale."
+    ],
+    "rules": [
+      { "name": "The Stamp Rule", "body": "The purple accent marks commitment and identity, never decoration — a locked pick, earned points, an active tab. If purple colors something the user didn't choose, it's wrong.", "section": "colors" },
+      { "name": "The Two-Purples Rule", "body": "Purple is the brand; the rating scale's 'purple' token is green. Ratings are always green/yellow/red on the 7.0/6.0 thresholds and never borrow the brand accent.", "section": "colors" },
+      { "name": "The Weight-Not-Family Rule", "body": "Hierarchy comes from weight (600→800) and size within one sans family. Never add a second typeface to signal a level.", "section": "typography" },
+      { "name": "The Numbers-Are-Display Rule", "body": "Scores, ratings, and points are the display type. Give them size and 800 weight; let headings stay quiet.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Resting surfaces are flat. A shadow signals an element has left the page (sheet, popover, sticky header) — never ambient decoration on a card.", "section": "elevation" },
+      { "name": "The No-Bevel Rule", "body": "Buttons are flat fills. Inset highlights, embossed edges, and accentGlow-style inner shadows are forbidden. Hover is a brightness/tint change, not a lift-and-shine.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep resting surfaces flat; convey depth with the bg → surface → surface-alt tonal ladder and 1px border dividers.",
+      "Do reserve Electric Purple for commitment and identity (locked picks, points, active tab, primary action).",
+      "Do drive hierarchy with weight (600→800) and big numerals within one sans family.",
+      "Do keep both themes correct: verify body text ≥ 4.5:1 in light and dark, and portal any header-launched floating layer to <body> to escape .mo-navlight.",
+      "Do give every transition a prefers-reduced-motion: reduce fallback; easing is ease-out cubic-bezier(0.22,1,0.36,1), ~0.2–0.34s.",
+      "Do keep the rating scale green/yellow/red on the 7.0/6.0 thresholds, separate from the brand purple."
+    ],
+    "donts": [
+      "Don't ship the grey, identity-less Flashscore stat-dump look.",
+      "Don't go over-gamified / childish: no confetti storms, cartoon mascots, garish badge spam, or bouncy toy motion.",
+      "Don't reproduce betting-site clutter (Nesine/Bilyoner): no ad-dense, odds-bombarded, cramped screens.",
+      "Don't reintroduce the SaaS bevel / gradient-glow template: no embossed buttons, no inset highlights, no accentGlow inner shadow.",
+      "Don't use background-clip: text gradient text, or a border-left/border-right > 1px colored stripe as an accent.",
+      "Don't put a drop shadow on a resting card, or glass/backdrop-filter on anything that isn't a floating sheet, header, or popover."
+    ]
+  }
+}

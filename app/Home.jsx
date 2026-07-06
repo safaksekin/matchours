@@ -9,7 +9,8 @@ import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addCommen
   createPredLeague, joinPredLeague, fetchMyPredLeagues, getUserId, deletePrediction,
   fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile,
   saveMatchLog, fetchMyMatchLog, fetchMyLogs, fetchMatchLogs, fetchUserMatchRatings, fetchLogCounts, deleteMatchLog,
-  fetchUserLogs, fetchUserComments, uploadLogPhoto, fetchMyRatedPlayers, backfillLogLogos } from "./lib/db";
+  fetchUserLogs, fetchUserComments, uploadLogPhoto, fetchMyRatedPlayers, backfillLogLogos,
+  fetchMyAvatar, fetchUserAvatar, uploadAvatar } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -3395,12 +3396,14 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var [comments, setComments] = useState(null);
   var [tab, setTab] = useState("logs");
   var [logView, setLogView] = useState(null);
+  var [avatar, setAvatar] = useState(null);
   var lang = (t && t._lang) || "tr";
   useEffect(function(){
     var id = requestAnimationFrame(function(){ setVisible(true); });
     var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
     fetchUserLogs(userId, 60).then(function(l){ setLogs(l || []); }).catch(function(){ setLogs([]); });
     fetchUserComments(userId, 40).then(function(cs){ setComments(cs || []); }).catch(function(){ setComments([]); });
+    fetchUserAvatar(userId).then(function(u){ setAvatar(u || null); }).catch(function(){});
     return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
   }, [userId]);
   function close(){ setVisible(false); setTimeout(onClose, 280); }
@@ -3417,8 +3420,10 @@ function UserProfileSheet({ userId, username, t, onClose }) {
       <div style={{ padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
-          <div style={{ width: 52, height: 52, borderRadius: 18, flexShrink: 0, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, color: "#fff" }}>{initial}</div>
+          {avatar
+            ? <img src={avatar} alt="" style={{ width: 52, height: 52, borderRadius: 18, objectFit: "cover", flexShrink: 0, display: "block" }} />
+            : <div style={{ width: 52, height: 52, borderRadius: 18, flexShrink: 0, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
+                display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, color: "#fff" }}>{initial}</div>}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: COLORS.textPrimary, fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>@{username}</div>
             <div style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700, marginTop: 2 }}>{logs === null ? "…" : logs.length} log</div>
@@ -4862,6 +4867,24 @@ function FootballDNA({ t, userId }) {
   </div>;
 }
 
+// Downscale + centre-crop an image file to a square JPEG blob — caps quality/size client-side.
+function cropSquareBlob(file, size, quality) {
+  return new Promise(function(resolve, reject){
+    var img = new Image();
+    img.onload = function(){
+      var s = Math.min(img.naturalWidth, img.naturalHeight);
+      var sx = (img.naturalWidth - s) / 2, sy = (img.naturalHeight - s) / 2;
+      var cv = document.createElement("canvas");
+      cv.width = size; cv.height = size;
+      var ctx = cv.getContext("2d");
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+      cv.toBlob(function(b){ try { URL.revokeObjectURL(img.src); } catch (e) {} b ? resolve(b) : reject(new Error("blob")); }, "image/jpeg", quality);
+    };
+    img.onerror = function(){ reject(new Error("img")); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
   useFavorites();
   var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
@@ -4873,15 +4896,25 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var [act, setAct] = useState("logs"); // activities toggle: "logs" | "comments"
   var [logView, setLogView] = useState(null); // a log row opened in the detail sheet
   var [username, setUsername] = useState(null);
+  var [avatar, setAvatar] = useState(null);
+  var [avaBusy, setAvaBusy] = useState(false);
+  var avatarInput = useRef(null);
   var [editing, setEditing] = useState(false);
   var [draft, setDraft] = useState("");
   var [savingName, setSavingName] = useState(false);
+  function onPickAvatar(e){
+    var f = e.target.files && e.target.files[0]; if (!f) return; setAvaBusy(true);
+    cropSquareBlob(f, 400, 0.82).then(function(blob){ return uploadAvatar(blob); })
+      .then(function(res){ setAvaBusy(false); if (res && res.url) setAvatar(res.url); })
+      .catch(function(){ setAvaBusy(false); });
+  }
   useEffect(function(){
     var cancelled = false;
     fetchMyComments(20).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
     fetchMyLogs(40).then(function(res){ return backfillLogLogos(res || []); }).then(function(res){ if (!cancelled) setLogs(res); }).catch(function(){ if (!cancelled) setLogs([]); });
     fetchMyRatedPlayers(24).then(function(res){ if (!cancelled) setScout(res || []); }).catch(function(){ if (!cancelled) setScout([]); });
     fetchMyUsername().then(function(u){ if (!cancelled && u) setUsername(u); }).catch(function(){});
+    fetchMyAvatar().then(function(u){ if (!cancelled && u) setAvatar(u); }).catch(function(){});
     return function(){ cancelled = true; };
   }, []);
   var userEmail = (session && session.user && session.user.email) || "";
@@ -4939,9 +4972,16 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
       {/* hero: avatar + identity. Flat — the gradient avatar is the single color moment. */}
       <div style={{ position: "relative", padding: "26px 20px 22px" }}>
         <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ width: 72, height: 72, borderRadius: 24, flexShrink: 0,
-            background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff" }}>{initial}</div>
+          <input ref={avatarInput} type="file" accept="image/*" onChange={onPickAvatar} style={{ display: "none" }} />
+          <div onClick={function(){ if (avatarInput.current) avatarInput.current.click(); }} style={{ position: "relative", width: 72, height: 72, flexShrink: 0, cursor: "pointer", opacity: avaBusy ? 0.6 : 1, WebkitTapHighlightColor: "transparent" }}>
+            {avatar
+              ? <img src={avatar} alt="" style={{ width: 72, height: 72, borderRadius: 24, objectFit: "cover", display: "block" }} />
+              : <div style={{ width: 72, height: 72, borderRadius: 24, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 800, color: "#fff" }}>{initial}</div>}
+            <span style={{ position: "absolute", bottom: -3, right: -3, width: 24, height: 24, borderRadius: 999, background: COLORS.accent, border: "2px solid " + COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="3.2" /></svg>
+            </span>
+          </div>
           <div style={{ minWidth: 0, flex: 1 }}>
             {editing
               ? <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
