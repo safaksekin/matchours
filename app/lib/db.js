@@ -129,11 +129,11 @@ export async function fetchComments(opts) {
   const rows = data || [];
   if (!rows.length) return [];
   const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
-  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-  const nameById = {};
-  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+  const byId = {};
+  (profs || []).forEach(function (p) { byId[p.id] = p; });
   return rows.map(function (r) {
-    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı", user_id: r.user_id };
+    return { id: r.id, text: r.body, created_at: r.created_at, user: (byId[r.user_id] && byId[r.user_id].username) || "kullanıcı", avatar: (byId[r.user_id] && byId[r.user_id].avatar_url) || null, user_id: r.user_id };
   });
 }
 
@@ -149,11 +149,11 @@ export async function fetchMatchComments(matchId) {
   const rows = data || [];
   if (!rows.length) return [];
   const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
-  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-  const nameById = {};
-  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+  const byId = {};
+  (profs || []).forEach(function (p) { byId[p.id] = p; });
   return rows.map(function (r) {
-    return { id: r.id, text: r.body, created_at: r.created_at, user: nameById[r.user_id] || "kullanıcı", user_id: r.user_id };
+    return { id: r.id, text: r.body, created_at: r.created_at, user: (byId[r.user_id] && byId[r.user_id].username) || "kullanıcı", avatar: (byId[r.user_id] && byId[r.user_id].avatar_url) || null, user_id: r.user_id };
   });
 }
 
@@ -187,10 +187,10 @@ export async function fetchCommunityFeed(limit) {
   const rows = data || [];
   if (!rows.length) return [];
   const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
-  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-  const nameById = {};
-  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
-  return rows.map(function (r) { return Object.assign({}, r, { user: nameById[r.user_id] || "kullanıcı" }); });
+  const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+  const byId = {};
+  (profs || []).forEach(function (p) { byId[p.id] = p; });
+  return rows.map(function (r) { return Object.assign({}, r, { user: (byId[r.user_id] && byId[r.user_id].username) || "kullanıcı", avatar: (byId[r.user_id] && byId[r.user_id].avatar_url) || null }); });
 }
 
 export async function addComment(opts) {
@@ -507,12 +507,12 @@ export async function fetchMatchLogs(matchId) {
   const rows = data || [];
   if (!rows.length) return [];
   const ids = Array.from(new Set(rows.map(function (r) { return r.user_id; })));
-  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", ids);
-  const nameById = {};
-  (profs || []).forEach(function (p) { nameById[p.id] = p.username; });
+  const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+  const byId = {};
+  (profs || []).forEach(function (p) { byId[p.id] = p; });
   return rows.map(function (r) {
-    return { userId: r.user_id, user: nameById[r.user_id] || "kullanıcı", rating: Number(r.rating), tags: r.tags || [],
-      attended: !!r.attended, venue: r.venue || null, photo: r.photo || null, created_at: r.created_at };
+    return { userId: r.user_id, user: (byId[r.user_id] && byId[r.user_id].username) || "kullanıcı", avatar: (byId[r.user_id] && byId[r.user_id].avatar_url) || null,
+      rating: Number(r.rating), tags: r.tags || [], attended: !!r.attended, venue: r.venue || null, photo: r.photo || null, created_at: r.created_at };
   });
 }
 

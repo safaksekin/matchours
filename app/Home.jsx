@@ -831,7 +831,7 @@ function CommentSection({ match, t }) {
     var cancelled = false;
     // match by target_id OR match_id so every comment on this match shows (not just mine)
     fetchMatchComments(match.id).then(function(rows){
-      if (!cancelled) setList(rows.map(function(c){ return { user: c.user, user_id: c.user_id, text: c.text, time: fmtCommentTime(c.created_at) }; }));
+      if (!cancelled) setList(rows.map(function(c){ return { user: c.user, user_id: c.user_id, avatar: c.avatar, text: c.text, time: fmtCommentTime(c.created_at) }; }));
     });
     return function(){ cancelled = true; };
   }, [match && match.id]);
@@ -851,12 +851,16 @@ function CommentSection({ match, t }) {
         color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>{t.send}</button>
     </div>
     {list.length === 0 && <div style={{ color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>—</div>}
-    {list.map(function(c, i){ return <div key={i} style={{ padding: "10px 12px", background: COLORS.cardAlt, borderRadius: 12,
-      marginBottom: 7, border: "none" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <UserLink userId={c.user_id} username={c.user} t={t} style={{ color: COLORS.accent, fontSize: 12, fontWeight: 700 }} />
-        <span style={{ color: COLORS.textMuted, fontSize: 11 }}>{c.time}</span></div>
-      <span style={{ color: COLORS.textPrimary, fontSize: 13 }}>{c.text}</span></div>; })}
+    {list.map(function(c, i){ return <div key={i} style={{ display: "flex", gap: 9, padding: "10px 12px", background: COLORS.cardAlt, borderRadius: 12, marginBottom: 7 }}>
+      {c.avatar
+        ? <img src={c.avatar} alt="" style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+        : <span style={{ width: 28, height: 28, borderRadius: "50%", background: COLORS.card, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 12, fontWeight: 800 }}>{(c.user || "?")[0].toUpperCase()}</span>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+          <UserLink userId={c.user_id} username={c.user} t={t} style={{ color: COLORS.accent, fontSize: 12, fontWeight: 700 }} />
+          <span style={{ color: COLORS.textMuted, fontSize: 11, flexShrink: 0 }}>{c.time}</span></div>
+        <span style={{ color: COLORS.textPrimary, fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.text}</span></div>
+    </div>; })}
   </div>;
 }
 
@@ -3269,7 +3273,9 @@ function MatchRatingsTab({ match, t }) {
       var me = uid && String(l.userId) === String(uid);
       return <div key={l.userId} onClick={function(){ setView(l); }} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 8px",
         borderBottom: "1px solid " + COLORS.border, cursor: "pointer", background: me ? COLORS.accentDim : "transparent", WebkitTapHighlightColor: "transparent" }}>
-        <span style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 14, fontWeight: 800 }}>{(l.user || "?")[0].toUpperCase()}</span>
+        {l.avatar
+          ? <img src={l.avatar} alt="" style={{ width: 34, height: 34, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+          : <span style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 14, fontWeight: 800 }}>{(l.user || "?")[0].toUpperCase()}</span>}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {me ? "@" + l.user + " (sen)" : <UserLink userId={l.userId} username={l.user} t={t} style={{ color: COLORS.textPrimary, fontWeight: 700 }} />}</div>
@@ -4867,6 +4873,10 @@ function FootballDNA({ t, userId }) {
   </div>;
 }
 
+// Session cache for the signed-in user's identity, so re-entering the profile tab doesn't
+// flash the old nickname / photo-less state while the fetch is in flight.
+var PROFILE_CACHE = { username: null, avatar: null };
+
 // Downscale + centre-crop an image file to a square JPEG blob — caps quality/size client-side.
 function cropSquareBlob(file, size, quality) {
   return new Promise(function(resolve, reject){
@@ -4895,8 +4905,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var [scout, setScout] = useState(null); // most-analysed players
   var [act, setAct] = useState("logs"); // activities toggle: "logs" | "comments"
   var [logView, setLogView] = useState(null); // a log row opened in the detail sheet
-  var [username, setUsername] = useState(null);
-  var [avatar, setAvatar] = useState(null);
+  var [username, setUsername] = useState(PROFILE_CACHE.username);
+  var [avatar, setAvatar] = useState(PROFILE_CACHE.avatar);
   var [avaBusy, setAvaBusy] = useState(false);
   var avatarInput = useRef(null);
   var [editing, setEditing] = useState(false);
@@ -4905,7 +4915,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   function onPickAvatar(e){
     var f = e.target.files && e.target.files[0]; if (!f) return; setAvaBusy(true);
     cropSquareBlob(f, 400, 0.82).then(function(blob){ return uploadAvatar(blob); })
-      .then(function(res){ setAvaBusy(false); if (res && res.url) setAvatar(res.url); })
+      .then(function(res){ setAvaBusy(false); if (res && res.url) { PROFILE_CACHE.avatar = res.url; setAvatar(res.url); } })
       .catch(function(){ setAvaBusy(false); });
   }
   useEffect(function(){
@@ -4913,8 +4923,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
     fetchMyComments(20).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
     fetchMyLogs(40).then(function(res){ return backfillLogLogos(res || []); }).then(function(res){ if (!cancelled) setLogs(res); }).catch(function(){ if (!cancelled) setLogs([]); });
     fetchMyRatedPlayers(24).then(function(res){ if (!cancelled) setScout(res || []); }).catch(function(){ if (!cancelled) setScout([]); });
-    fetchMyUsername().then(function(u){ if (!cancelled && u) setUsername(u); }).catch(function(){});
-    fetchMyAvatar().then(function(u){ if (!cancelled && u) setAvatar(u); }).catch(function(){});
+    fetchMyUsername().then(function(u){ if (u) { PROFILE_CACHE.username = u; if (!cancelled) setUsername(u); } }).catch(function(){});
+    fetchMyAvatar().then(function(u){ PROFILE_CACHE.avatar = u || null; if (!cancelled) setAvatar(u || null); }).catch(function(){});
     return function(){ cancelled = true; };
   }, []);
   var userEmail = (session && session.user && session.user.email) || "";
@@ -4924,7 +4934,7 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   function saveName(){
     var v = draft.trim(); if (v.length < 2) return;
     setSavingName(true);
-    updateUsername(v).then(function(res){ if (!res || !res.error) setUsername(v); setEditing(false); setSavingName(false); });
+    updateUsername(v).then(function(res){ if (!res || !res.error) { PROFILE_CACHE.username = v; setUsername(v); } setEditing(false); setSavingName(false); });
   }
   var createdAt = session && session.user && session.user.created_at;
   var locale = lang === "tr" ? "tr-TR" : (lang === "de" ? "de-DE" : "en-US");
@@ -5409,8 +5419,10 @@ function CommentCard({ c, onOpenMatch, t, liveLookup }) {
   }
 
   return <div style={{ display: "flex", gap: 11, padding: "13px 2px", borderBottom: "1px solid " + COLORS.border }}>
-    <span style={{ width: 42, height: 42, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
-      alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 16, fontWeight: 800 }}>{initial}</span>
+    {c.avatar
+      ? <img src={c.avatar} alt="" style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+      : <span style={{ width: 42, height: 42, borderRadius: "50%", background: COLORS.cardAlt, flexShrink: 0, display: "flex",
+          alignItems: "center", justifyContent: "center", color: COLORS.textMuted, fontSize: 16, fontWeight: 800 }}>{initial}</span>}
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
         <UserLink userId={c.user_id} username={name} t={t} style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} />
