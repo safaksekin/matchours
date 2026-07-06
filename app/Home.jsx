@@ -3403,6 +3403,7 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var [tab, setTab] = useState("logs");
   var [logView, setLogView] = useState(null);
   var [avatar, setAvatar] = useState(null);
+  var drag = useSheetDrag(function(){ close(); });
   var lang = (t && t._lang) || "tr";
   useEffect(function(){
     var id = requestAnimationFrame(function(){ setVisible(true); });
@@ -3420,9 +3421,12 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var box = { padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border };
   return createPortal(<><div onClick={close} onTouchStart={stopP} onTouchMove={stopP} onTouchEnd={stopP}
     style={{ position: "fixed", inset: 0, zIndex: 1360, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
-    <div onClick={stopP} style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: COLORS.bg, fontFamily: FONT,
+    <div onClick={stopP}
+      onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
+      style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: COLORS.bg, fontFamily: FONT,
       borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
-      transform: visible ? "translateY(0)" : "translateY(100%)", transition: "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
+      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+      transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
@@ -3975,7 +3979,8 @@ function MatchModal({ match, isF1, t, onClose }) {
       width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
       WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y",
       borderTopLeftRadius: 24, borderTopRightRadius: 24,
-      background: "var(--modalGrad)", backdropFilter: "blur(30px) saturate(170%)", WebkitBackdropFilter: "blur(30px) saturate(170%)",
+      background: drag.dragging ? COLORS.card : "var(--modalGrad)",
+      backdropFilter: drag.dragging ? "none" : "blur(30px) saturate(170%)", WebkitBackdropFilter: drag.dragging ? "none" : "blur(30px) saturate(170%)",
       border: "1px solid var(--modalBorder)", borderBottom: "none",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
@@ -3983,7 +3988,7 @@ function MatchModal({ match, isF1, t, onClose }) {
       {/* modal header: drag handle + teams + score + close. Glassy (frosted) with a visible purple tint. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
         background: "linear-gradient(180deg, rgba(106,69,230,0.26), rgba(106,69,230,0.10))",
-        backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
+        backdropFilter: drag.dragging ? "none" : "blur(18px) saturate(160%)", WebkitBackdropFilter: drag.dragging ? "none" : "blur(18px) saturate(160%)",
         borderBottom: "1px solid rgba(106,69,230,0.22)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
