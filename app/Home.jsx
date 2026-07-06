@@ -1331,7 +1331,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
       borderTopLeftRadius: 24, borderTopRightRadius: 24, border: "1px solid var(--modalBorder)", borderBottom: "none",
       padding: "12px 20px max(24px, env(safe-area-inset-bottom))", fontFamily: FONT, touchAction: "pan-y",
-      maxHeight: "90vh", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+      maxHeight: "90vh", overflowY: drag.dragging ? "hidden" : "auto", WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
@@ -3033,8 +3033,9 @@ function MatchLogSheet({ match, lineups, venue, existing, t, onClose, onSaved, o
     style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(0,0,0,0.42)",
     backdropFilter: "blur(9px)", WebkitBackdropFilter: "blur(9px)",
     display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
-    {/* match identity ABOVE the sheet, on the blurred backdrop (Letterboxd style) */}
-    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center" }}>
+    {/* match identity ABOVE the sheet, on the blurred backdrop (Letterboxd style) — tracks the sheet while dragging */}
+    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center",
+      transform: "translateY(" + drag.dragY + "px)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 6, maxWidth: "100%" }}>
         <TeamLogo src={match.homeLogo} name={match.home} size={22} />
         <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{locTeam(match.home, t)}</span>
@@ -3046,9 +3047,9 @@ function MatchLogSheet({ match, lineups, venue, existing, t, onClose, onSaved, o
     </div>
     <div onClick={function(e){ e.stopPropagation(); }}
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
-      style={{ width: "100%", maxWidth: 440, maxHeight: "74vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
+      style={{ width: "100%", maxWidth: 440, maxHeight: "74vh", overflowY: drag.dragging ? "hidden" : "auto", background: COLORS.card, fontFamily: FONT,
         borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border,
-        boxShadow: "0 -8px 40px rgba(20,40,40,0.28)", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+        boxShadow: "0 -8px 40px rgba(20,40,40,0.28)", WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain",
         transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
         transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ padding: "10px 18px 0" }}>
@@ -3307,8 +3308,9 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
     onTouchStart={function(e){ e.stopPropagation(); }} onTouchMove={function(e){ e.stopPropagation(); }} onTouchEnd={function(e){ e.stopPropagation(); }}
     style={{ position: "fixed", inset: 0, zIndex: 1370, background: "rgba(0,0,0,0.42)", backdropFilter: "blur(9px)", WebkitBackdropFilter: "blur(9px)",
       display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
-    {/* match identity above the sheet, on the blurred backdrop */}
-    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center" }}>
+    {/* match identity above the sheet, on the blurred backdrop — tracks the sheet while dragging */}
+    <div style={{ flex: 1, minHeight: 0, width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "max(24px, env(safe-area-inset-top)) 24px 18px", textAlign: "center",
+      transform: "translateY(" + drag.dragY + "px)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, maxWidth: "100%" }}>
         <TeamLogo src={match.homeLogo} name={match.home} size={22} />
         <span style={{ color: "#fff", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 100 }}>{locTeam(match.home, t)}</span>
@@ -3319,10 +3321,10 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
     </div>
     <div onClick={function(e){ e.stopPropagation(); }}
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
-      style={{ width: "100%", maxWidth: 440, maxHeight: "72vh", overflowY: "auto", background: COLORS.card, fontFamily: FONT,
+      style={{ width: "100%", maxWidth: 440, maxHeight: "72vh", overflowY: drag.dragging ? "hidden" : "auto", background: COLORS.card, fontFamily: FONT,
       borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)",
-      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain",
       padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
       <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -3423,9 +3425,9 @@ function UserProfileSheet({ userId, username, t, onClose }) {
     style={{ position: "fixed", inset: 0, zIndex: 1360, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
     <div onClick={stopP}
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
-      style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: COLORS.bg, fontFamily: FONT,
+      style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: drag.dragging ? "hidden" : "auto", background: COLORS.bg, fontFamily: FONT,
       borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
-      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
       <div style={{ padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
@@ -3976,11 +3978,10 @@ function MatchModal({ match, isF1, t, onClose }) {
     transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll mo-matchsheet"
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd} style={{
-      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
-      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y",
+      width: "100%", maxWidth: 720, overflowY: drag.dragging ? "hidden" : "auto", overflowX: "hidden", fontFamily: FONT,
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain", touchAction: "pan-y",
       borderTopLeftRadius: 24, borderTopRightRadius: 24,
-      background: drag.dragging ? COLORS.card : "var(--modalGrad)",
-      backdropFilter: drag.dragging ? "none" : "blur(30px) saturate(170%)", WebkitBackdropFilter: drag.dragging ? "none" : "blur(30px) saturate(170%)",
+      background: "var(--modalGrad)", backdropFilter: "blur(30px) saturate(170%)", WebkitBackdropFilter: "blur(30px) saturate(170%)",
       border: "1px solid var(--modalBorder)", borderBottom: "none",
       transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)",
       transition: drag.dragging ? "none" : "transform 0.34s cubic-bezier(0.22,1,0.36,1)" }}>
@@ -3988,7 +3989,7 @@ function MatchModal({ match, isF1, t, onClose }) {
       {/* modal header: drag handle + teams + score + close. Glassy (frosted) with a visible purple tint. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
         background: "linear-gradient(180deg, rgba(106,69,230,0.26), rgba(106,69,230,0.10))",
-        backdropFilter: drag.dragging ? "none" : "blur(18px) saturate(160%)", WebkitBackdropFilter: drag.dragging ? "none" : "blur(18px) saturate(160%)",
+        backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
         borderBottom: "1px solid rgba(106,69,230,0.22)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
@@ -4291,8 +4292,8 @@ function PlayerModal({ player, t, onClose }) {
     transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll mo-matchsheet"
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd} style={{
-      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
-      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
+      width: "100%", maxWidth: 720, overflowY: drag.dragging ? "hidden" : "auto", overflowX: "hidden", fontFamily: FONT,
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
       background: "var(--modalGrad)",
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
       border: "1px solid var(--modalBorder)",
@@ -4453,8 +4454,8 @@ function TeamModal({ team, t, onClose, onOpenMatch }) {
     transition: "background 0.3s ease" }}>
     <div onClick={function(e){ e.stopPropagation(); }} className="mo-scroll mo-matchsheet"
       onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd} style={{
-      width: "100%", maxWidth: 720, overflowY: "auto", overflowX: "hidden", fontFamily: FONT,
-      WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
+      width: "100%", maxWidth: 720, overflowY: drag.dragging ? "hidden" : "auto", overflowX: "hidden", fontFamily: FONT,
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain", borderTopLeftRadius: 28, borderTopRightRadius: 28,
       background: "var(--modalGrad)",
       backdropFilter: "blur(22px) saturate(160%)", WebkitBackdropFilter: "blur(22px) saturate(160%)",
       border: "1px solid var(--modalBorder)",
