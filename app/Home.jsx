@@ -3414,10 +3414,10 @@ function MatchPoster({ g, t, onClick }) {
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.27l-5.9 3.09 1.13-6.58L2.45 9.14l6.6-.96z" /></svg>{rating}</span>}
     {g.attended && <span style={Object.assign({ top: 6, left: 6, width: 20, height: 20, borderRadius: 999, padding: 0 }, chip)}>
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg></span>}
-    <div style={{ position: "absolute", inset: 0, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "0 8px" }}>
-      <span style={logo}><TeamLogo src={g.home_logo} name={g.home} size={29} /></span>
-      <span style={{ position: "relative", color: "#fff", fontSize: 17, fontWeight: 800, minWidth: 28, textAlign: "center", fontVariantNumeric: "tabular-nums", textShadow: "0 1px 8px rgba(0,0,0,0.8)" }}>{g.score || "–"}</span>
-      <span style={logo}><TeamLogo src={g.away_logo} name={g.away} size={29} /></span>
+    <div style={{ position: "absolute", inset: 0, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "0 6px" }}>
+      <span style={logo}><TeamLogo src={g.home_logo} name={g.home} size={24} /></span>
+      <span style={{ position: "relative", flexShrink: 0, color: "#fff", fontSize: 15, fontWeight: 800, textAlign: "center", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", textShadow: "0 1px 8px rgba(0,0,0,0.8)" }}>{g.score || "–"}</span>
+      <span style={logo}><TeamLogo src={g.away_logo} name={g.away} size={24} /></span>
     </div>
   </div>;
 }
