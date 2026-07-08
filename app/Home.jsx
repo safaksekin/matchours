@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { slugify } from "./_lib/routes";
+import { STADIUMS, matchVenue } from "./lib/stadiums";
 import { supabase } from "./lib/supabaseClient";
 import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addComment as dbAddComment, fetchCommunityFeed,
   fetchCommentCounts, fetchFavorites, addFavorite, removeFavorite, fetchMyComments, fetchMyUsername, updateUsername,
@@ -3385,6 +3386,42 @@ function LogCard({ g, t, lang, onClick }) {
   </div>;
 }
 
+// A square Letterboxd-style "poster" for a logged match. Crests + score sit CENTRE-stage, lit for
+// emphasis. Attended-with-photo shows the real ground photo (sharp, the flex of being there);
+// TV logs get a blurred generic-stadium backdrop + accent tube-light — atmospheric but clearly not "your" photo.
+function MatchPoster({ g, t, onClick }) {
+  var photo = (g.attended && g.photo) ? g.photo : null;
+  var rating = g.rating != null ? Number(g.rating).toFixed(1) : null;
+  var chip = { position: "absolute", zIndex: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 2,
+    padding: "2px 6px", borderRadius: 8, fontSize: 11, fontWeight: 800, color: "#fff",
+    background: "rgba(0,0,0,0.46)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" };
+  var logo = { position: "relative", display: "flex", filter: "drop-shadow(0 2px 5px rgba(0,0,0,0.55))" };
+  return <div onClick={onClick} style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: 14, overflow: "hidden",
+    cursor: onClick ? "pointer" : "default", border: "1px solid " + COLORS.border, WebkitTapHighlightColor: "transparent", background: COLORS.card }}>
+    {photo
+      ? <img src={photo} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+      : <img src="/stadium-bg.jpg" alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(7px) saturate(0.85)", transform: "scale(1.18)" }} />}
+    {/* tint/scrim: purple-dark mood on TV logs, top+bottom legibility scrim on real photos */}
+    <span aria-hidden style={{ position: "absolute", inset: 0, background: photo
+      ? "linear-gradient(180deg, rgba(0,0,0,0.30) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.36) 100%)"
+      : "linear-gradient(155deg, color-mix(in srgb, var(--accent) 52%, transparent) 0%, rgba(8,6,18,0.62) 100%)" }} />
+    {/* focal glow behind the crests */}
+    <span aria-hidden style={{ position: "absolute", left: "50%", top: "50%", width: "92%", height: "62%", transform: "translate(-50%, -50%)", borderRadius: "50%", pointerEvents: "none", zIndex: 1,
+      background: photo ? "radial-gradient(ellipse at center, rgba(0,0,0,0.58) 0%, rgba(0,0,0,0.26) 46%, transparent 72%)"
+                        : "radial-gradient(ellipse at center, color-mix(in srgb, var(--accent) 62%, transparent) 0%, transparent 66%)",
+      filter: photo ? "none" : "blur(6px)" }} />
+    {rating && <span style={Object.assign({ top: 6, right: 6 }, chip)}>
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.27l-5.9 3.09 1.13-6.58L2.45 9.14l6.6-.96z" /></svg>{rating}</span>}
+    {g.attended && <span style={Object.assign({ top: 6, left: 6, width: 20, height: 20, borderRadius: 999, padding: 0 }, chip)}>
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg></span>}
+    <div style={{ position: "absolute", inset: 0, zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "0 8px" }}>
+      <span style={logo}><TeamLogo src={g.home_logo} name={g.home} size={29} /></span>
+      <span style={{ position: "relative", color: "#fff", fontSize: 17, fontWeight: 800, minWidth: 28, textAlign: "center", fontVariantNumeric: "tabular-nums", textShadow: "0 1px 8px rgba(0,0,0,0.8)" }}>{g.score || "–"}</span>
+      <span style={logo}><TeamLogo src={g.away_logo} name={g.away} size={29} /></span>
+    </div>
+  </div>;
+}
+
 // Clickable @username → opens that user's public profile. stopPropagation so it doesn't also fire
 // the row/card's own onClick (open match). No user_id → renders as plain (non-clickable) text.
 function UserLink({ userId, username, t, style }) {
@@ -3421,6 +3458,7 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var initial = (username || "?")[0].toUpperCase();
   var tagLbl = function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; };
   var box = { padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border };
+  var favM = (logs || []).slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
   return createPortal(<><div onClick={close} onTouchStart={stopP} onTouchMove={stopP} onTouchEnd={stopP}
     style={{ position: "fixed", inset: 0, zIndex: 1360, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
     <div onClick={stopP}
@@ -3449,13 +3487,25 @@ function UserProfileSheet({ userId, username, t, onClose }) {
           <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Taste Graph</div>
           <FootballDNA t={t} userId={userId} />
         </div>
+        {(logs || []).some(function(g){ return g.attended && g.venue; }) && <div style={{ marginBottom: 18 }}>
+          <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Pasaport</div>
+          <PassportMap logs={logs} t={t} />
+        </div>}
+        {favM.length > 0 && <div style={{ marginBottom: 18 }}>
+          <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Favori Maçlar</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+            {favM.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+          </div>
+        </div>}
         <UnderlineTabs indicatorColor={COLORS.accent} active={tab} onChange={setTab}
           tabs={[{ id: "logs", label: "Loglar" }, { id: "comments", label: "Yorumlar" }]} />
         <div style={{ marginTop: 12 }}>
           {tab === "logs"
             ? (logs === null ? <SkeletonRows rows={3} card={false} />
                 : logs.length > 0
-                  ? logs.map(function(g){ return <LogCard key={g.id} g={g} t={t} lang={lang} onClick={function(){ setLogView(g); }} />; })
+                  ? <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                      {logs.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+                    </div>
                   : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok.</div>)
             : (comments === null ? <SkeletonRows rows={3} card={false} />
                 : comments.length > 0
@@ -3933,6 +3983,9 @@ function MatchModal({ match, isF1, t, onClose }) {
   var [detail, setDetail] = useState(undefined); // undefined = not fetched yet
   var [dtLoading, setDtLoading] = useState(false);
   var [jumpComments, setJumpComments] = useState(0); // bump -> MatchDetail switches to the comments tab
+  // ambient "tube-light" behind the header, tinted by each crest's real colour (identity, not decoration)
+  var homeCol = useImageColor(match.homeLogo);
+  var awayCol = useImageColor(match.awayLogo);
 
   useEffect(function(){
     // trigger enter transition on next frame
@@ -3988,10 +4041,16 @@ function MatchModal({ match, isF1, t, onClose }) {
 
       {/* modal header: drag handle + teams + score + close. Glassy (frosted) with a visible purple tint. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+        position: "relative", overflow: "hidden",
         background: "linear-gradient(180deg, rgba(106,69,230,0.26), rgba(106,69,230,0.10))",
         backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
         borderBottom: "1px solid rgba(106,69,230,0.22)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
+        {/* per-crest ambient tube-light: soft, content-derived, fades out — not a decorative glow */}
+        {homeCol && <span aria-hidden style={{ position: "absolute", left: -50, top: "50%", width: 240, height: 200, marginTop: -100,
+          borderRadius: "50%", background: homeCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26, pointerEvents: "none", zIndex: -1 }} />}
+        {awayCol && <span aria-hidden style={{ position: "absolute", right: -50, top: "50%", width: 240, height: 200, marginTop: -100,
+          borderRadius: "50%", background: awayCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26, pointerEvents: "none", zIndex: -1 }} />}
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>
@@ -4901,6 +4960,231 @@ function cropSquareBlob(file, size, quality) {
   });
 }
 
+// Compact world landmasses ({ f:[{ g:{ c:[polygon[ring[[lng,lat]]]] } }] }) fetched once, module-cached.
+var WORLD_CACHE = null, WORLD_PROMISE = null;
+function useWorldGeo() {
+  var [w, setW] = useState(WORLD_CACHE);
+  useEffect(function(){
+    if (WORLD_CACHE) { if (!w) setW(WORLD_CACHE); return; }
+    if (typeof window === "undefined") return;
+    if (!WORLD_PROMISE) WORLD_PROMISE = fetch("/world.geo.json").then(function(r){ return r.json(); }).then(function(j){ WORLD_CACHE = j; return j; }).catch(function(){ return null; });
+    var cancelled = false;
+    WORLD_PROMISE.then(function(j){ if (!cancelled && j) setW(j); });
+    return function(){ cancelled = true; };
+  }, []);
+  return w;
+}
+
+// Football Passport — a stylised, zoomed-out "trophy map" of grounds the user has ATTENDED.
+// Deliberately not a literal atlas (no tiles/deps): a flight-map constellation that is on-brand,
+// offline-safe and RN-portable. Only attended logs light a pin → the map IS the stadium-vs-TV moat.
+function PassportMap({ logs, t }) {
+  var W = 340, H = 260;
+  var [sel, setSel] = useState(null); // { st, x, y, above, vis } — the open stadium balloon
+  var mapRef = useRef(null);
+  var [view, setView] = useState({ z: 1, tx: 0, ty: 0 }); // pan/zoom transform (SVG user units)
+  var ptrs = useRef({}), dragged = useRef(false), pinch = useRef(null);
+  var lg = logs || [];
+  // attended venues → matched stadiums (keep earliest visit), plus unmatched venue names
+  var visMap = {}, unmatched = {}, venuesAll = {};
+  lg.forEach(function(g){
+    if (!g.attended || !g.venue) return;
+    venuesAll[g.venue] = 1;
+    var ts = g.match_ts || g.created_at || "";
+    var st = matchVenue(g.venue);
+    if (st) { if (!visMap[st.name] || ts < visMap[st.name].ts) visMap[st.name] = { st: st, ts: ts }; }
+    else unmatched[g.venue] = 1;
+  });
+  var visited = Object.keys(visMap).map(function(k){ return visMap[k]; }).sort(function(a, b){ return String(a.ts).localeCompare(String(b.ts)); });
+  // TEMP demo: with no real attended logs yet, show a sample journey so the map reads as a map. Remove once real stadium logs exist.
+  var isDemo = visited.length === 0;
+  if (isDemo) {
+    var demo = ["Rams Park", "Papara Park", "Anfield", "Spotify Camp Nou", "San Siro"];
+    visited = demo.map(function(nm, i){ var st = STADIUMS.filter(function(s){ return s.name === nm; })[0]; return st ? { st: st, ts: "2025-0" + (i + 1) + "-01" } : null; }).filter(Boolean);
+    venuesAll = {}; visited.forEach(function(v){ venuesAll[v.st.name] = 1; });
+  }
+  var cities = {}, countries = {};
+  visited.forEach(function(v){ cities[v.st.city] = 1; countries[v.st.country] = v.st.flag || "•"; });
+  var nStad = Object.keys(venuesAll).length, nCity = Object.keys(cities).length, nCountry = Object.keys(countries).length;
+
+  // view bounds: fit visited pins (padded, min span), else default to Europe+Türkiye
+  var b;
+  if (visited.length) {
+    var lats = visited.map(function(v){ return v.st.lat; }), lngs = visited.map(function(v){ return v.st.lng; });
+    var cLat = (Math.max.apply(null, lats) + Math.min.apply(null, lats)) / 2;
+    var cLng = (Math.max.apply(null, lngs) + Math.min.apply(null, lngs)) / 2;
+    var latSpan = Math.max(Math.max.apply(null, lats) - Math.min.apply(null, lats), 4) * 1.6;
+    var lngSpan = Math.max(Math.max.apply(null, lngs) - Math.min.apply(null, lngs), 6) * 1.6;
+    b = { n: cLat + latSpan / 2, s: cLat - latSpan / 2, e: cLng + lngSpan / 2, w: cLng - lngSpan / 2 };
+  } else {
+    b = { n: 59, s: 35, e: 33, w: -11 };
+  }
+  var k = Math.cos(((b.n + b.s) / 2) * Math.PI / 180) || 0.7;
+  var minPx = b.w * k, maxPx = b.e * k, minPy = -b.n, maxPy = -b.s;
+  var scale = Math.min(W / (maxPx - minPx), H / (maxPy - minPy)) * 0.9;
+  var offX = (W - (maxPx - minPx) * scale) / 2 - minPx * scale;
+  var offY = (H - (maxPy - minPy) * scale) / 2 - minPy * scale;
+  function P(lat, lng){ return [lng * k * scale + offX, -lat * scale + offY]; }
+
+  // real landmasses within view, projected to the same coordinate space as the pins
+  var world = useWorldGeo();
+  var land = [];
+  if (world && world.f) {
+    world.f.forEach(function(f){
+      var polys = f.g && f.g.c; if (!polys) return;
+      var mnx = Infinity, mxx = -Infinity, mny = Infinity, mxy = -Infinity;
+      polys.forEach(function(poly){ poly.forEach(function(r){ for (var q = 0; q < r.length; q++){ var pt = r[q]; if (pt[0] < mnx) mnx = pt[0]; if (pt[0] > mxx) mxx = pt[0]; if (pt[1] < mny) mny = pt[1]; if (pt[1] > mxy) mxy = pt[1]; } }); });
+      if (mxx < b.w || mnx > b.e || mxy < b.s || mny > b.n) return; // whole feature off-screen
+      var d = "";
+      polys.forEach(function(poly){ poly.forEach(function(r){ for (var q = 0; q < r.length; q++){ var sp = P(r[q][1], r[q][0]); d += (q === 0 ? "M" : "L") + sp[0].toFixed(1) + " " + sp[1].toFixed(1); } d += "Z"; }); });
+      if (d) land.push(d);
+    });
+  }
+
+  var visitedNames = {}; visited.forEach(function(v){ visitedNames[v.st.name] = 1; });
+  var locked = STADIUMS.filter(function(st){
+    if (visitedNames[st.name]) return false;
+    var p = P(st.lat, st.lng); return p[0] > 6 && p[0] < W - 6 && p[1] > 6 && p[1] < H - 6;
+  });
+  // graticule: projected lat/lng grid lines → reads as a map, not a dot field
+  var grid = [];
+  for (var ln = Math.ceil(b.w / 10) * 10; ln <= b.e; ln += 10) { var gA = P(b.n, ln), gB = P(b.s, ln); grid.push([gA[0], gA[1], gB[0], gB[1]]); }
+  for (var la = Math.ceil(b.s / 8) * 8; la <= b.n; la += 8) { var gC = P(la, b.w), gD = P(la, b.e); grid.push([gC[0], gC[1], gD[0], gD[1]]); }
+  var journey = visited.map(function(v){ var p = P(v.st.lat, v.st.lng); return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+  var stat = function(n, l){ return <div style={{ flex: 1, textAlign: "center" }}>
+    <div style={{ color: COLORS.accent, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{n}</div>
+    <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>{l}</div></div>; };
+  function openSt(st, p, vis, e){
+    if (e) e.stopPropagation();
+    if (dragged.current) return; // this was a pan/pinch, not a tap
+    var r = mapRef.current ? mapRef.current.getBoundingClientRect() : { width: W, height: H };
+    // pin's on-screen position accounts for the current pan/zoom transform
+    var ux = (view.tx + p[0] * view.z) / W * r.width, uy = (view.ty + p[1] * view.z) / H * r.height;
+    ux = Math.max(112, Math.min(r.width - 112, ux));
+    setSel({ st: st, x: ux, y: uy, above: uy > r.height * 0.48, vis: vis });
+  }
+  function clampView(v){ var mnx = W - W * v.z, mny = H - H * v.z; return { z: v.z, tx: Math.min(0, Math.max(mnx, v.tx)), ty: Math.min(0, Math.max(mny, v.ty)) }; }
+  function zoomBy(factor, S, Sy){ setView(function(v){ var nz = Math.min(6, Math.max(1, v.z * factor)); var cx = (S - v.tx) / v.z, cy = (Sy - v.ty) / v.z; return clampView({ z: nz, tx: S - cx * nz, ty: Sy - cy * nz }); }); }
+  function evUser(cx, cy){ var r = mapRef.current.getBoundingClientRect(); return [(cx - r.left) / r.width * W, (cy - r.top) / r.height * H]; }
+  function onDown(e){ if (e.currentTarget.setPointerCapture) try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {} ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY }; dragged.current = false; pinch.current = null; }
+  function onMove(e){
+    var p = ptrs.current[e.pointerId]; if (!p) return;
+    var dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    var ids = Object.keys(ptrs.current);
+    if (ids.length >= 2){
+      var a = ptrs.current[ids[0]], b = ptrs.current[ids[1]];
+      var dist = Math.hypot(a.x - b.x, a.y - b.y), mid = evUser((a.x + b.x) / 2, (a.y + b.y) / 2);
+      if (pinch.current){ dragged.current = true; zoomBy(dist / pinch.current, mid[0], mid[1]); }
+      pinch.current = dist; return;
+    }
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragged.current = true;
+    if (view.z > 1){ var r = mapRef.current.getBoundingClientRect(); setView(function(v){ return clampView({ z: v.z, tx: v.tx + dx / r.width * W, ty: v.ty + dy / r.height * H }); }); }
+  }
+  function onUp(e){ delete ptrs.current[e.pointerId]; if (Object.keys(ptrs.current).length < 2) pinch.current = null; }
+  function onWheel(e){ var u = evUser(e.clientX, e.clientY); zoomBy(e.deltaY < 0 ? 1.18 : 0.85, u[0], u[1]); }
+  function zoomBtn(dir, e){ e.stopPropagation(); zoomBy(dir > 0 ? 1.6 : 1 / 1.6, W / 2, H / 2); }
+
+  return <div style={{ background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 18, position: "relative" }}>
+    <div ref={mapRef} onClick={function(){ setSel(null); }} style={{ position: "relative", width: "100%", overflow: "hidden", borderTopLeftRadius: 18, borderTopRightRadius: 18 }}>
+      <svg viewBox={"0 0 " + W + " " + H} width="100%"
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}
+        style={{ display: "block", touchAction: "none", cursor: view.z > 1 ? "grab" : "default", background: "linear-gradient(180deg, var(--cardAlt, rgba(120,90,240,0.05)), transparent)" }}>
+        <g transform={"translate(" + view.tx.toFixed(2) + " " + view.ty.toFixed(2) + ") scale(" + view.z.toFixed(3) + ")"}>
+        {land.map(function(d, i){ return <path key={"ld" + i} d={d} fillRule="evenodd" fill="color-mix(in srgb, var(--accent) 12%, var(--card))" stroke="color-mix(in srgb, var(--accent) 26%, transparent)" strokeWidth="0.5" />; })}
+        {grid.map(function(l, i){ return <line key={i} x1={l[0]} y1={l[1]} x2={l[2]} y2={l[3]} stroke={COLORS.border} strokeWidth="0.6" opacity="0.35" />; })}
+        {visited.length > 1 && <polyline points={journey} fill="none" stroke={COLORS.accent} strokeWidth="1.2" strokeDasharray="3 4" strokeLinecap="round" opacity="0.55" />}
+        {locked.map(function(st, i){ var p = P(st.lat, st.lng); var on = sel && sel.st.name === st.name; return <g key={"l" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(st, p, false, e); }}>
+          <circle cx={p[0]} cy={p[1]} r="12" fill="transparent" />
+          <circle cx={p[0]} cy={p[1]} r={on ? 5.4 : 4.4} fill={COLORS.card} stroke={on ? COLORS.accent : COLORS.textSecondary} strokeWidth="1.6" opacity="0.95" />
+          <circle cx={p[0]} cy={p[1]} r="1.5" fill={COLORS.textMuted} />
+        </g>; })}
+        {visited.map(function(v, i){ var p = P(v.st.lat, v.st.lng); return <g key={"v" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(v.st, p, true, e); }}>
+          <circle cx={p[0]} cy={p[1]} r="12" fill="transparent" />
+          <circle cx={p[0]} cy={p[1]} r="9" fill={COLORS.accent} opacity="0.16" />
+          <circle cx={p[0]} cy={p[1]} r="4.6" fill={COLORS.accent}>
+            <animate attributeName="opacity" values="1;0.55;1" dur="2.6s" repeatCount="indefinite" begin={(i * 0.3) + "s"} />
+          </circle>
+          <circle cx={p[0]} cy={p[1]} r="2" fill="#fff" opacity="0.9" />
+          {visited.length <= 10 && <text x={p[0]} y={p[1] - 8} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={COLORS.textSecondary} style={{ fontFamily: FONT, pointerEvents: "none" }}>{v.st.city}</text>}
+        </g>; })}
+        </g>
+      </svg>
+      <div style={{ position: "absolute", right: 8, bottom: 8, display: "flex", flexDirection: "column", gap: 6, zIndex: 5 }}>
+        {[["+", 1], ["–", -1]].map(function(b){ return <button key={b[0]} onClick={function(e){ zoomBtn(b[1], e); }} aria-label="zoom" style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid " + COLORS.border, background: "color-mix(in srgb, var(--card) 82%, transparent)", color: COLORS.textPrimary, fontSize: 17, fontWeight: 800, lineHeight: 1, cursor: "pointer", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", WebkitTapHighlightColor: "transparent" }}>{b[0]}</button>; })}
+        {view.z > 1 && <button onClick={function(e){ e.stopPropagation(); setView({ z: 1, tx: 0, ty: 0 }); }} aria-label="sıfırla" style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid " + COLORS.border, background: "color-mix(in srgb, var(--card) 82%, transparent)", color: COLORS.accent, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", WebkitTapHighlightColor: "transparent" }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg></button>}
+      </div>
+      {isDemo && <span style={{ position: "absolute", top: 8, left: 8, padding: "2px 7px", borderRadius: 999, background: "color-mix(in srgb, var(--card) 70%, transparent)", color: COLORS.textMuted, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}>ÖRNEK</span>}
+      {visited.length === 0 && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", pointerEvents: "none" }}>
+        <span style={{ color: COLORS.textSecondary, fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, background: "color-mix(in srgb, var(--card) 78%, transparent)", padding: "10px 14px", borderRadius: 14, backdropFilter: "blur(6px)" }}>
+          Bir maçı <b style={{ color: COLORS.accent }}>stattan</b> logla — ilk stadyumun burada parlasın.</span>
+      </div>}
+    </div>
+    <div style={{ display: "flex", padding: "13px 6px", borderTop: "1px solid " + COLORS.border }}>
+      {stat(nCountry, "Ülke")}
+      <div style={{ width: 1, background: COLORS.border }} />
+      {stat(nCity, "Şehir")}
+      <div style={{ width: 1, background: COLORS.border }} />
+      {stat(nStad, "Stadyum")}
+    </div>
+    {Object.keys(countries).length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 12px 13px" }}>
+      {Object.keys(countries).map(function(c){ return <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>
+        <span style={{ fontSize: 12 }}>{countries[c]}</span>{c}</span>; })}
+    </div>}
+    {sel && <StadiumPopup sel={sel} onClose={function(){ setSel(null); }} />}
+  </div>;
+}
+
+// Balloon popup for a stadium pin: lazy-fetches the ground's lead photo from Wikimedia, with a
+// stylised flag header fallback. Shows name, city, capacity, club + visited/locked state.
+function StadiumPopup({ sel, onClose }) {
+  var st = sel.st;
+  var [photo, setPhoto] = useState(null);
+  var [failed, setFailed] = useState(false);
+  useEffect(function(){
+    setPhoto(null); setFailed(false);
+    if (typeof window === "undefined") return;
+    var c = false;
+    function get(lang, title){
+      if (!title) return Promise.resolve(null);
+      return fetch("https://" + lang + ".wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(title))
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ return j ? ((j.thumbnail && j.thumbnail.source) || (j.originalimage && j.originalimage.source) || null) : null; })
+        .catch(function(){ return null; });
+    }
+    // English page first; many Turkish grounds only exist on TR Wikipedia → fall back to that
+    get("en", st.wiki).then(function(src){ return src || get("tr", st.wikiTr || st.name); })
+      .then(function(src){ if (!c && src) setPhoto(src); });
+    return function(){ c = true; };
+  }, [st.wiki]);
+  var showImg = photo && !failed;
+  return <div onClick={function(e){ e.stopPropagation(); }} style={{ position: "absolute", left: sel.x, top: sel.y, zIndex: 40, width: 214,
+    transform: sel.above ? "translate(-50%, calc(-100% - 13px))" : "translate(-50%, 13px)",
+    background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 16,
+    boxShadow: "0 14px 36px rgba(0,0,0,0.34)", overflow: "hidden", fontFamily: FONT, animation: "mo-pop 0.18s ease-out" }}>
+    <div style={{ position: "relative", height: 104, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      {showImg && <img src={photo} alt="" onError={function(){ setFailed(true); }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />}
+      {!showImg && <span style={{ fontSize: 40 }}>{st.flag}</span>}
+      <button onClick={function(e){ e.stopPropagation(); onClose(); }} aria-label="kapat" style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.44)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+      <span style={{ position: "absolute", left: 8, bottom: 6, padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: sel.vis ? COLORS.accent : "rgba(0,0,0,0.5)", color: "#fff", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }}>{sel.vis ? "✓ Gidildi" : "Henüz gidilmedi"}</span>
+    </div>
+    <div style={{ padding: "10px 12px 12px" }}>
+      <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>{st.name}</div>
+      <div style={{ color: COLORS.textMuted, fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>{st.flag} {st.city} · {st.country}</div>
+      <div style={{ height: 1, background: COLORS.border, margin: "9px 0" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}><span style={{ color: COLORS.textMuted }}>Kapasite</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{st.cap ? st.cap.toLocaleString("tr-TR") : "—"}</span></div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: COLORS.textMuted }}>Takım</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, textAlign: "right", maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.team || "—"}</span></div>
+    </div>
+    <span aria-hidden style={{ position: "absolute", left: "50%", marginLeft: -6, width: 12, height: 12, background: COLORS.card,
+      borderRight: sel.above ? "1px solid " + COLORS.border : "none", borderBottom: sel.above ? "1px solid " + COLORS.border : "none",
+      borderLeft: sel.above ? "none" : "1px solid " + COLORS.border, borderTop: sel.above ? "none" : "1px solid " + COLORS.border,
+      bottom: sel.above ? -7 : "auto", top: sel.above ? "auto" : -7, transform: "rotate(45deg)" }} />
+  </div>;
+}
+
 function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
   useFavorites();
   var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
@@ -4952,6 +5236,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
     { label: t.membership, val: memberSince },
   ];
   var sectionLabel = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 };
+  // top 4 logged matches by rating → the Letterboxd "favourites" row (auto for now; can become a manual pick)
+  var favMatches = (logs || []).slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
 
   function favStrip(list, kind) {
     return <div className="mo-scroll" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
@@ -5031,34 +5317,30 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
             <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.label}</div></div>; })}
         </div>
 
+        {/* Favori Maçlar — Letterboxd-style favourites row (top-rated logs) */}
+        {favMatches.length > 0 && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>Favori Maçlar</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+            {favMatches.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+          </div>
+        </div>}
+
+        {/* Favoriler: teams + players (coaches pending a favourite-coach source) */}
+        {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
+        {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favPlayers}</div>{favStrip(favPlayers, "player")}</div>}
+        {favRecs.length === 0 && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>{t.favTeams}</div>
+          <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.noFavorites}</div>
+        </div>}
+
         {/* Football DNA — your rating/prediction fingerprint */}
         <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Taste Graph</div><FootballDNA t={t} /></div>
 
-        {/* Passport: collections earned from logs (stadiums attended, competitions, teams) */}
-        {(function(){
-          var lg = logs || [];
-          if (lg.length === 0) return null;
-          var venues = {}, comps = {}, teams = {};
-          lg.forEach(function(g){ if (g.attended && g.venue) venues[g.venue] = 1; if (g.league) comps[g.league] = 1; if (g.home) teams[locTeam(g.home, t)] = 1; if (g.away) teams[locTeam(g.away, t)] = 1; });
-          var stadiums = Object.keys(venues);
-          var cols = [{ n: stadiums.length, l: "Stadyum" }, { n: Object.keys(comps).length, l: "Turnuva" }, { n: Object.keys(teams).length, l: "Takım" }];
-          return <div style={{ marginBottom: 22 }}>
-            <div style={sectionLabel}>Pasaport</div>
-            <div style={{ background: COLORS.card, border: "1px solid " + COLORS.border, borderRadius: 18, padding: "16px 6px" }}>
-              <div style={{ display: "flex" }}>
-                {cols.map(function(c, i){ return <div key={i} style={{ flex: 1, textAlign: "center", borderLeft: i ? "1px solid " + COLORS.border : "none" }}>
-                  <div style={{ color: COLORS.accent, fontSize: 20, fontWeight: 800 }}>{c.n}</div>
-                  <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 3 }}>{c.l}</div>
-                </div>; })}
-              </div>
-              {stadiums.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "14px 10px 2px" }}>
-                {stadiums.slice(0, 14).map(function(v, i){ return <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
-                  {v}</span>; })}
-              </div>}
-            </div>
-          </div>;
-        })()}
+        {/* Passport: stylised trophy map of grounds ATTENDED (shows a sample journey until real stadium logs exist) */}
+        {logs && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>Pasaport</div>
+          <PassportMap logs={logs} t={t} />
+        </div>}
 
         {/* Scout: players you've analysed most (from your ratings) */}
         {scout && scout.length > 0 && <div style={{ marginBottom: 22 }}>
@@ -5077,14 +5359,6 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
                 <div style={{ color: COLORS.accent, fontSize: 10, fontWeight: 800, marginTop: 1 }}>{p.n} analiz</div>
               </div>; })}
           </div>
-        </div>}
-
-        {/* favorites */}
-        {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
-        {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favPlayers}</div>{favStrip(favPlayers, "player")}</div>}
-        {favRecs.length === 0 && <div style={{ marginBottom: 22 }}>
-          <div style={sectionLabel}>{t.favTeams}</div>
-          <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.noFavorites}</div>
         </div>}
 
         {/* Activities: comments + logs behind one toggle */}
@@ -5110,7 +5384,9 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
               : (logs === null
                   ? <SkeletonRows rows={4} card={false} />
                   : logs.length > 0
-                    ? logs.map(function(g){ return <LogCard key={g.id} g={g} t={t} lang={lang} onClick={function(){ setLogView(g); }} />; })
+                    ? <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                        {logs.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+                      </div>
                     : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>Henüz log yok — biten bir maça girip logla.</div>)}
           </div>
         </div>
@@ -5309,19 +5585,31 @@ function MobileBottomNav({ active, onSelect, t }) {
   t = t || I18N.tr;
   var ref = useRef(null);
   var [ind, setInd] = useState({ left: 0, width: 0 });
+  // liquid-glass bar only inside the native app (Capacitor); the web keeps the flat opaque bar.
+  // starts false so SSR/first paint match; flips true after mount only when running natively.
+  var [native, setNative] = useState(false);
   var items = [["mac", t.navMatch], ["arama", t.navSearch], ["topluluk", t.navCommunity], ["tahminler", t.navPredictions], ["profil", t.navProfile]];
+  useEffect(function(){
+    if (typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+      setNative(true);
+      document.documentElement.classList.add("mo-native");
+    }
+  }, []);
   useEffect(function(){
     function measure(){
       var el = ref.current; if (!el) return;
       var idx = items.findIndex(function(x){ return x[0] === active; });
-      var btn = idx >= 0 ? el.children[idx] : null;
-      if (btn) setInd({ left: btn.offsetLeft + btn.offsetWidth * 0.28, width: btn.offsetWidth * 0.44 });
+      var btns = el.querySelectorAll("button");
+      var btn = idx >= 0 ? btns[idx] : null;
+      if (!btn) return;
+      if (native) setInd({ left: btn.offsetLeft + 5, width: btn.offsetWidth - 10 });
+      else setInd({ left: btn.offsetLeft + btn.offsetWidth * 0.28, width: btn.offsetWidth * 0.44 });
     }
     measure();
     var id = setTimeout(measure, 50);
     window.addEventListener("resize", measure);
     return function(){ clearTimeout(id); window.removeEventListener("resize", measure); };
-  }, [active]);
+  }, [active, native]);
   function icon(id) {
     var p = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", width: 22, height: 22, viewBox: "0 0 24 24" };
     if (id === "mac") return <svg {...p}><circle cx="12" cy="12" r="9" /><path d="m12 7 2.9 2.1-1.1 3.4h-3.6L9.1 9.1z" /></svg>;
@@ -5330,17 +5618,40 @@ function MobileBottomNav({ active, onSelect, t }) {
     if (id === "tahminler") return <svg {...p}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>;
     return <svg {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></svg>;
   }
-  return <><style>{".mo-bottomnav{display:flex}@media(min-width:900px){.mo-bottomnav{display:none}}"}</style>
+  var tabs = items.map(function(it){ var a = active === it[0];
+    return <button key={it[0]} onClick={function(){ onSelect(it[0]); }} style={{ position: "relative", flex: 1, background: "transparent", border: "none",
+      cursor: "pointer", padding: native ? "9px 0 8px" : "8px 0 7px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+      color: a ? COLORS.accent : COLORS.textMuted, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+      <NavIcon id={it[0]} active={a} svg={icon(it[0])} />
+      <span style={{ fontSize: 10, fontWeight: a ? 700 : 600 }}>{it[1]}</span>
+    </button>; });
+  var css = ".mo-bottomnav{display:flex}@media(min-width:900px){.mo-bottomnav{display:none}}";
+
+  if (native) {
+    // iOS 26 liquid glass: floating capsule + a translucent pill that springs under the active tab
+    return <><style>{css}</style>
+      <nav ref={ref} className="mo-bottomnav" style={{ position: "fixed", left: 12, right: 12,
+      bottom: "calc(env(safe-area-inset-bottom) + 8px)", zIndex: 95, borderRadius: 30, overflow: "hidden",
+      background: "color-mix(in srgb, var(--card) 58%, transparent)",
+      backdropFilter: "blur(34px) saturate(185%)", WebkitBackdropFilter: "blur(34px) saturate(185%)",
+      border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+      boxShadow: "0 10px 34px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.34)" }}>
+      <span aria-hidden style={{ position: "absolute", top: 6, bottom: 6, borderRadius: 20,
+        background: "color-mix(in srgb, var(--accent) 20%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--accent) 32%, transparent)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.28)",
+        left: ind.left, width: ind.width, opacity: ind.width ? 1 : 0,
+        transition: "left 0.44s cubic-bezier(0.34,1.32,0.5,1), width 0.44s cubic-bezier(0.34,1.32,0.5,1), opacity 0.22s ease", pointerEvents: "none" }} />
+      {tabs}
+    </nav></>;
+  }
+
+  // web: the original flat, edge-to-edge bar with a thin sliding underline
+  return <><style>{css}</style>
     <nav ref={ref} className="mo-bottomnav" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 95,
     background: COLORS.card, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -2px 16px rgba(0,0,0,0.2)",
     paddingBottom: "env(safe-area-inset-bottom)" }}>
-    {items.map(function(it){ var a = active === it[0];
-      return <button key={it[0]} onClick={function(){ onSelect(it[0]); }} style={{ flex: 1, background: "transparent", border: "none",
-        cursor: "pointer", padding: "8px 0 7px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-        color: a ? COLORS.accent : COLORS.textMuted, transition: "color 0.2s", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-        <NavIcon id={it[0]} active={a} svg={icon(it[0])} />
-        <span style={{ fontSize: 10, fontWeight: a ? 700 : 600 }}>{it[1]}</span>
-      </button>; })}
+    {tabs}
     <span aria-hidden style={{ position: "absolute", top: 0, height: 2.5, borderRadius: 3, background: COLORS.accent,
       left: ind.left, width: ind.width, opacity: ind.width ? 1 : 0,
       transition: "left 0.3s cubic-bezier(0.22,1,0.36,1), width 0.3s cubic-bezier(0.22,1,0.36,1), opacity 0.2s ease", pointerEvents: "none" }} />
@@ -5615,6 +5926,7 @@ function AppStyles() {
     "@keyframes moDrop{from{opacity:0;transform:translateY(-9px)}to{opacity:1;transform:translateY(0)}}" +
     "@keyframes moFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}" +
     "@keyframes moShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}" +
+    "@keyframes mo-pop{from{opacity:0}to{opacity:1}}" +
     ".mo-skel{background:linear-gradient(90deg,var(--cardAlt) 25%,var(--border) 50%,var(--cardAlt) 75%);background-size:200% 100%;animation:moShimmer 1.4s ease-in-out infinite}" +
     // reduced motion: kill decorative animation + long transitions (DESIGN.md requirement)
     "@media(prefers-reduced-motion:reduce){*{animation-duration:0.001ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important;scroll-behavior:auto!important}}" +
@@ -5649,6 +5961,7 @@ function AppStyles() {
     ".mo-navlight img{filter:brightness(0) invert(1)!important}" +
     "@media(min-width:900px){.mo-only-mobile{display:none}.mo-only-desktop{display:block}}" +
     "@media(max-width:899px){body{padding-bottom:calc(58px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:899px){html.mo-native body{padding-bottom:calc(78px + env(safe-area-inset-bottom))}}" +
     "@media(max-width:899px){.mo-usingleague .mo-col-left{display:none}}" +
     ".mo-cols{display:flex;flex-direction:column;gap:18px}" +
     ".mo-col-left{width:100%;min-width:0}" +
