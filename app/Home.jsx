@@ -11,7 +11,7 @@ import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addCommen
   fetchRatingConsensus, fetchMyMatchRatings, fetchUserRatingProfile,
   saveMatchLog, fetchMyMatchLog, fetchMyLogs, fetchMatchLogs, fetchUserMatchRatings, fetchLogCounts, deleteMatchLog,
   fetchUserLogs, fetchUserComments, uploadLogPhoto, fetchMyRatedPlayers, backfillLogLogos,
-  fetchMyAvatar, fetchUserAvatar, uploadAvatar } from "./lib/db";
+  fetchMyAvatar, fetchUserAvatar, uploadAvatar, fetchFavMatches, saveFavMatches, fetchCompatibility, fetchHotTakes } from "./lib/db";
 
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
@@ -1066,6 +1066,18 @@ function GoalAssistIcons({ g, a, style }) {
 
 function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals, assists, onPlayerClick, highlight }) {
   var starting = lineup.starting || [];
+  // manager row (favouritable) — coach came as {id,name,photo} from the API lineup
+  var coach = lineup.coach && typeof lineup.coach === "object" ? lineup.coach : (lineup.coach ? { name: lineup.coach } : null);
+  var coachEl = coach && coach.name ? <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "6px 10px 6px 8px", background: COLORS.card, borderRadius: 12, border: "1px solid " + COLORS.border }}>
+    {coach.photo
+      ? <img src={coach.photo} alt="" onError={function(e){ e.currentTarget.style.visibility = "hidden"; }} style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: COLORS.cardAlt }} />
+      : <div style={{ width: 26, height: 26, borderRadius: "50%", background: COLORS.accentDim, color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{coach.name[0]}</div>}
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ color: COLORS.textMuted, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em" }}>TEKNİK DİREKTÖR</div>
+      <div style={{ color: COLORS.textSecondary, fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{coach.name}</div>
+    </div>
+    {coach.id != null && <FavButton kind="coach" refId={coach.id} name={coach.name} image={coach.photo} size={24} />}
+  </div> : null;
   var rows = {};
   var hasGrid = false;
   starting.forEach(function (p) {
@@ -1135,6 +1147,7 @@ function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals,
             <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <path d="M7 7h10M13 3l4 4-4 4" /><path d="M17 17H7M11 21l-4-4 4-4" /></svg></span>}
         </div>; })}
+      {coachEl}
     </div>;
   }
 
@@ -1202,6 +1215,7 @@ function Pitch({ lineup, subbedOut, flip, label, color, ratings, players, goals,
         </div>; })}
     </div>
     </div>
+    {coachEl}
   </div>;
 }
 
@@ -3292,10 +3306,78 @@ function MatchRatingsTab({ match, t }) {
 }
 
 // Small bottom sheet: one user's full log — match rating (purple) + player ratings (green/yellow/red).
+// Draw a shareable "sticker" of a match log onto a canvas — typographic + brand-purple, no external
+// images (so it always exports; crest CDNs may taint the canvas). 1080×1350 (portrait, story-ready).
+async function drawShareCard(canvas, d) {
+  var W = 1080, H = 1350; canvas.width = W; canvas.height = H;
+  var ctx = canvas.getContext("2d");
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) {}
+  var F = "Manrope, system-ui, sans-serif";
+  function fit(text, maxW, size, weight) { var s = size; ctx.font = weight + " " + s + "px " + F; while (ctx.measureText(text).width > maxW && s > 22) { s -= 4; ctx.font = weight + " " + s + "px " + F; } return s; }
+  function rrect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function pill(cx, cy, text) { ctx.font = "700 32px " + F; var w = ctx.measureText(text).width, h = 60, bw = w + 56; rrect(cx - bw / 2, cy - h / 2, bw, h, h / 2); ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.fill(); ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, cx, cy + 2); ctx.textBaseline = "alphabetic"; }
+  var g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, "#7A50F0"); g.addColorStop(0.52, "#3A2A86"); g.addColorStop(1, "#0E0B1E");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  var rg = ctx.createRadialGradient(W / 2, 210, 30, W / 2, 210, 760); rg.addColorStop(0, "rgba(255,255,255,0.16)"); rg.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  var M = 96, cx = W / 2;
+  ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "800 46px " + F; ctx.fillText("fikstür", M, 122);
+  ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,0.72)"; ctx.font = "600 30px " + F; ctx.fillText((d.league || "") + (d.date ? "  ·  " + d.date : ""), W - M, 120);
+  ctx.textAlign = "center"; ctx.fillStyle = "#fff";
+  ctx.font = "800 " + fit((d.home || "").toUpperCase(), W - 2 * M, 64, "800") + "px " + F; ctx.fillText((d.home || "").toUpperCase(), cx, 445);
+  ctx.font = "800 150px " + F; ctx.fillText(d.score || "–", cx, 645);
+  ctx.font = "800 " + fit((d.away || "").toUpperCase(), W - 2 * M, 64, "800") + "px " + F; ctx.fillText((d.away || "").toUpperCase(), cx, 785);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(M, 872); ctx.lineTo(W - M, 872); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.72)"; ctx.font = "800 30px " + F; ctx.fillText("M A Ç   P U A N I M", cx, 958);
+  ctx.fillStyle = "#fff"; ctx.font = "800 148px " + F; ctx.fillText(d.rating != null ? Number(d.rating).toFixed(1) : "–", cx, 1105);
+  pill(cx, 1188, d.attended ? ("STATTA · " + (d.venue || "İzledim")) : "EKRANDAN İZLEDİM");
+  if (d.tags && d.tags.length) { ctx.fillStyle = "rgba(255,255,255,0.68)"; ctx.font = "600 30px " + F; ctx.fillText(d.tags.slice(0, 3).join("   ·   "), cx, 1258); }
+  ctx.fillStyle = "rgba(255,255,255,0.82)"; ctx.font = "700 30px " + F; ctx.textAlign = "left"; ctx.fillText(d.user ? ("@" + d.user) : "", M, H - 66);
+  ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillText("fikstür.com", W - M, H - 66);
+}
+
+function ShareCardModal({ d, onClose }) {
+  var [visible, setVisible] = useState(false);
+  var [busy, setBusy] = useState(false);
+  var canvasRef = useRef(null);
+  useEffect(function(){
+    var id = requestAnimationFrame(function(){ setVisible(true); });
+    var prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    if (canvasRef.current) drawShareCard(canvasRef.current, d);
+    return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
+  }, []);
+  function close(){ setVisible(false); setTimeout(onClose, 260); }
+  function go(){
+    var canvas = canvasRef.current; if (!canvas || busy) return; setBusy(true);
+    canvas.toBlob(function(blob){
+      setBusy(false); if (!blob) return;
+      var text = (d.home || "") + " " + (d.score || "") + " " + (d.away || "") + " — " + (d.rating != null ? Number(d.rating).toFixed(1) : "") + " · fikstür";
+      try {
+        var file = new File([blob], "fikstur.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], text: text }).catch(function(){}); return; }
+      } catch (e) {}
+      var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "fikstur-log.png"; document.body.appendChild(a); a.click(); a.remove();
+    }, "image/png");
+  }
+  if (typeof document === "undefined") return null;
+  return createPortal(<div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 1400, background: "rgba(0,0,0,0.68)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, opacity: visible ? 1 : 0, transition: "opacity 0.26s ease", fontFamily: FONT }}>
+    <canvas ref={canvasRef} onClick={function(e){ e.stopPropagation(); }} style={{ width: "min(300px, 78vw)", borderRadius: 18, boxShadow: "0 20px 60px rgba(0,0,0,0.5)", transform: visible ? "scale(1)" : "scale(0.94)", transition: "transform 0.3s cubic-bezier(0.22,1,0.36,1)" }} />
+    <div onClick={function(e){ e.stopPropagation(); }} style={{ display: "flex", gap: 10, marginTop: 20 }}>
+      <button onClick={go} disabled={busy} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 26px", background: COLORS.accent, color: "#fff", border: "none", borderRadius: 14, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></svg>
+        {busy ? "…" : "Paylaş / İndir"}
+      </button>
+      <button onClick={close} style={{ padding: "13px 20px", background: "rgba(255,255,255,0.14)", color: "#fff", border: "none", borderRadius: 14, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>Kapat</button>
+    </div>
+  </div>, document.body);
+}
+
 function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
   var [visible, setVisible] = useState(false);
   var [players, setPlayers] = useState(null);
   var [deleting, setDeleting] = useState(false);
+  var [share, setShare] = useState(false);
   var drag = useSheetDrag(function(){ close(); });
   useEffect(function(){
     var id = requestAnimationFrame(function(){ setVisible(true); });
@@ -3331,10 +3413,20 @@ function RatingDetailSheet({ match, log, t, onClose, onDelete }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <span style={{ color: COLORS.textPrimary, fontSize: 15, fontWeight: 800 }}>{log.own ? "Senin logun" : "@" + log.user}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={function(){ setShare(true); }} aria-label="paylaş" style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 999, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.accent, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>
+            Paylaş
+          </button>
           <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 700 }}>maç</span>
           <span style={{ color: COLORS.accent, fontSize: 22, fontWeight: 800 }}>{log.rating.toFixed(1)}</span>
         </div>
       </div>
+      {share && <ShareCardModal onClose={function(){ setShare(false); }} d={{
+        home: locTeam(match.home, t), away: locTeam(match.away, t), score: match.score, rating: log.rating,
+        attended: log.attended, venue: log.venue, league: match.league, date: match.date,
+        user: log.user || (log.own ? PROFILE_CACHE.username : ""),
+        tags: (log.tags || []).map(function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; })
+      }} />}
       {log.attended && <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.accent, fontSize: 12, fontWeight: 700, marginBottom: 12 }}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
         {log.venue || "Statta izledi"}</div>}
@@ -3442,6 +3534,8 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var [tab, setTab] = useState("logs");
   var [logView, setLogView] = useState(null);
   var [avatar, setAvatar] = useState(null);
+  var [favIds, setFavIds] = useState([]);
+  var [compat, setCompat] = useState(null);
   var drag = useSheetDrag(function(){ close(); });
   var lang = (t && t._lang) || "tr";
   useEffect(function(){
@@ -3450,6 +3544,8 @@ function UserProfileSheet({ userId, username, t, onClose }) {
     fetchUserLogs(userId, 60).then(function(l){ setLogs(l || []); }).catch(function(){ setLogs([]); });
     fetchUserComments(userId, 40).then(function(cs){ setComments(cs || []); }).catch(function(){ setComments([]); });
     fetchUserAvatar(userId).then(function(u){ setAvatar(u || null); }).catch(function(){});
+    fetchFavMatches(userId).then(function(ids){ setFavIds(ids || []); }).catch(function(){});
+    fetchCompatibility(userId).then(function(c){ setCompat(c); }).catch(function(){});
     return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; };
   }, [userId]);
   function close(){ setVisible(false); setTimeout(onClose, 280); }
@@ -3458,7 +3554,11 @@ function UserProfileSheet({ userId, username, t, onClose }) {
   var initial = (username || "?")[0].toUpperCase();
   var tagLbl = function(id){ var f = STYLE_TAGS.filter(function(x){ return x.id === id; })[0]; return f ? f.label : id; };
   var box = { padding: "12px 14px", marginBottom: 8, background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border };
-  var favM = (logs || []).slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
+  var favM = (function(){
+    var lgs = logs || [];
+    if (favIds.length){ var byId = {}; lgs.forEach(function(g){ byId[String(g.match_id)] = g; }); var picked = favIds.map(function(id){ return byId[String(id)]; }).filter(Boolean); if (picked.length) return picked; }
+    return lgs.slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
+  })();
   return createPortal(<><div onClick={close} onTouchStart={stopP} onTouchMove={stopP} onTouchEnd={stopP}
     style={{ position: "fixed", inset: 0, zIndex: 1360, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
     <div onClick={stopP}
@@ -3483,6 +3583,23 @@ function UserProfileSheet({ userId, username, t, onClose }) {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
+        {compat && compat.pct != null && <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", marginBottom: 18, borderRadius: 14, background: COLORS.accentDim, border: "1px solid " + COLORS.glassBorder }}>
+          <div style={{ position: "relative", width: 46, height: 46, flexShrink: 0 }}>
+            <svg width="46" height="46" viewBox="0 0 46 46">
+              <circle cx="23" cy="23" r="19" fill="none" stroke={COLORS.border} strokeWidth="4.5" />
+              <circle cx="23" cy="23" r="19" fill="none" stroke={COLORS.accent} strokeWidth="4.5" strokeLinecap="round"
+                strokeDasharray={(2 * Math.PI * 19).toFixed(1)} strokeDashoffset={(2 * Math.PI * 19 * (1 - compat.pct / 100)).toFixed(1)} transform="rotate(-90 23 23)" />
+            </svg>
+            <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: COLORS.accent, fontVariantNumeric: "tabular-nums" }}>{compat.pct}</span>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800 }}>%{compat.pct} taste uyumu</div>
+            <div style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 1 }}>{compat.n} ortak puana göre</div>
+          </div>
+        </div>}
+        {compat && compat.pct == null && (compat.n || 0) > 0 && <div style={{ color: COLORS.textMuted, fontSize: 12, marginBottom: 16, padding: "9px 13px", background: COLORS.card, borderRadius: 12, border: "1px solid " + COLORS.border }}>
+          Taste uyumu için yeterli ortak puan yok — aynı maç/oyunculara puan verdikçe belirir.
+        </div>}
         <div style={{ marginBottom: 18 }}>
           <div style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Taste Graph</div>
           <FootballDNA t={t} userId={userId} />
@@ -4041,16 +4158,19 @@ function MatchModal({ match, isF1, t, onClose }) {
 
       {/* modal header: drag handle + teams + score + close. Glassy (frosted) with a visible purple tint. */}
       <div className="mo-sticky" style={{ zIndex: 5, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        position: "relative", overflow: "hidden",
+        position: "relative",
         background: "linear-gradient(180deg, rgba(106,69,230,0.26), rgba(106,69,230,0.10))",
         backdropFilter: "blur(18px) saturate(160%)", WebkitBackdropFilter: "blur(18px) saturate(160%)",
         borderBottom: "1px solid rgba(106,69,230,0.22)",
         padding: "max(10px, env(safe-area-inset-top)) 18px 14px" }}>
-        {/* per-crest ambient tube-light: soft, content-derived, fades out — not a decorative glow */}
-        {homeCol && <span aria-hidden style={{ position: "absolute", left: -50, top: "50%", width: 240, height: 200, marginTop: -100,
-          borderRadius: "50%", background: homeCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26, pointerEvents: "none", zIndex: -1 }} />}
-        {awayCol && <span aria-hidden style={{ position: "absolute", right: -50, top: "50%", width: 240, height: 200, marginTop: -100,
-          borderRadius: "50%", background: awayCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26, pointerEvents: "none", zIndex: -1 }} />}
+        {/* per-crest ambient tube-light, clipped to the header's rounded rect via its own layer
+            (so the header itself isn't overflow:hidden — the AI popover can spill below it) */}
+        <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28, pointerEvents: "none", zIndex: -1 }}>
+          {homeCol && <span aria-hidden style={{ position: "absolute", left: -50, top: "50%", width: 240, height: 200, marginTop: -100,
+            borderRadius: "50%", background: homeCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26 }} />}
+          {awayCol && <span aria-hidden style={{ position: "absolute", right: -50, top: "50%", width: 240, height: 200, marginTop: -100,
+            borderRadius: "50%", background: awayCol, filter: "blur(52px)", WebkitFilter: "blur(52px)", opacity: 0.26 }} />}
+        </div>
         <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 12px" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textSecondary }}>
@@ -5185,16 +5305,61 @@ function StadiumPopup({ sel, onClose }) {
   </div>;
 }
 
+// Bottom sheet to hand-pick up to 4 favourite matches (Letterboxd-style), ordered by tap.
+function FavMatchPicker({ logs, initial, t, onClose, onSave }) {
+  var [visible, setVisible] = useState(false);
+  var [sel, setSel] = useState((initial || []).map(String));
+  var drag = useSheetDrag(function(){ close(); });
+  useEffect(function(){ var id = requestAnimationFrame(function(){ setVisible(true); }); var prev = document.body.style.overflow; document.body.style.overflow = "hidden"; return function(){ cancelAnimationFrame(id); document.body.style.overflow = prev; }; }, []);
+  function close(){ setVisible(false); setTimeout(onClose, 280); }
+  function stopP(e){ e.stopPropagation(); }
+  function toggle(id){ id = String(id); setSel(function(cur){ if (cur.indexOf(id) !== -1) return cur.filter(function(x){ return x !== id; }); if (cur.length >= 4) return cur; return cur.concat([id]); }); }
+  function save(){ if (onSave) onSave(sel); close(); }
+  if (typeof document === "undefined") return null;
+  var list = logs || [];
+  return createPortal(<div onClick={close} onTouchStart={stopP} onTouchMove={stopP} onTouchEnd={stopP}
+    style={{ position: "fixed", inset: 0, zIndex: 1380, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", opacity: visible ? 1 : 0, transition: "opacity 0.3s ease" }}>
+    <div onClick={stopP} onTouchStart={drag.handlers.onTouchStart} onTouchMove={drag.handlers.onTouchMove} onTouchEnd={drag.handlers.onTouchEnd}
+      style={{ width: "100%", maxWidth: 480, maxHeight: "86vh", overflowY: drag.dragging ? "hidden" : "auto", background: COLORS.bg, fontFamily: FONT,
+      borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTop: "1px solid " + COLORS.border, boxShadow: "0 -8px 40px rgba(20,40,40,0.28)",
+      WebkitOverflowScrolling: drag.dragging ? "auto" : "touch", overscrollBehavior: "contain",
+      transform: visible ? ("translateY(" + drag.dragY + "px)") : "translateY(100%)", transition: drag.dragging ? "none" : "transform 0.32s cubic-bezier(0.22,1,0.36,1)" }}>
+      <div style={{ padding: "10px 18px max(24px, env(safe-area-inset-bottom))" }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ color: COLORS.textPrimary, fontSize: 17, fontWeight: 800 }}>Favori Maçlar</span>
+          <button onClick={save} style={{ padding: "7px 16px", background: COLORS.accent, color: "#fff", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{t.save || "Kaydet"}</button>
+        </div>
+        <div style={{ color: COLORS.textMuted, fontSize: 12.5, marginBottom: 14 }}>En sevdiğin 4 maçı seç · sırayla dokun ({sel.length}/4)</div>
+        {list.length > 0
+          ? <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {list.map(function(g){ var i = sel.indexOf(String(g.match_id)); var on = i !== -1; return <div key={g.id} onClick={function(){ toggle(g.match_id); }} style={{ position: "relative", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                <div style={{ opacity: on ? 1 : 0.66, outline: on ? ("2.5px solid " + COLORS.accent) : "none", outlineOffset: 1, borderRadius: 14, transition: "opacity 0.15s" }}>
+                  <MatchPoster g={g} t={t} />
+                </div>
+                {on && <span style={{ position: "absolute", top: 6, left: 6, zIndex: 5, width: 22, height: 22, borderRadius: 999, background: COLORS.accent, color: "#fff", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.3)" }}>{i + 1}</span>}
+              </div>; })}
+            </div>
+          : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: 14, background: COLORS.card, borderRadius: 16 }}>Henüz log yok.</div>}
+      </div>
+    </div>
+  </div>, document.body);
+}
+
 function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, onOpenPlayer }) {
   useFavorites();
   var favRecs = Object.keys(FAV.map).map(function(k){ return FAV.map[k]; });
   var favTeams = favRecs.filter(function(r){ return r.kind === "team"; });
   var favPlayers = favRecs.filter(function(r){ return r.kind === "player"; });
+  var favCoaches = favRecs.filter(function(r){ return r.kind === "coach"; });
   var [my, setMy] = useState({ count: 0, items: [] });
   var [logs, setLogs] = useState(null);
   var [scout, setScout] = useState(null); // most-analysed players
+  var [hotTakes, setHotTakes] = useState([]); // ratings that diverge most from the community
   var [act, setAct] = useState("logs"); // activities toggle: "logs" | "comments"
   var [logView, setLogView] = useState(null); // a log row opened in the detail sheet
+  var [favIds, setFavIds] = useState([]); // hand-picked favourite match_ids (ordered)
+  var [picking, setPicking] = useState(false); // fav-match picker sheet open
   var [username, setUsername] = useState(PROFILE_CACHE.username);
   var [avatar, setAvatar] = useState(PROFILE_CACHE.avatar);
   var [avaBusy, setAvaBusy] = useState(false);
@@ -5213,6 +5378,8 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
     fetchMyComments(20).then(function(res){ if (!cancelled) setMy(res || { count: 0, items: [] }); }).catch(function(){});
     fetchMyLogs(40).then(function(res){ return backfillLogLogos(res || []); }).then(function(res){ if (!cancelled) setLogs(res); }).catch(function(){ if (!cancelled) setLogs([]); });
     fetchMyRatedPlayers(24).then(function(res){ if (!cancelled) setScout(res || []); }).catch(function(){ if (!cancelled) setScout([]); });
+    fetchFavMatches().then(function(ids){ if (!cancelled) setFavIds(ids || []); }).catch(function(){});
+    fetchHotTakes().then(function(hs){ if (!cancelled) setHotTakes(hs || []); }).catch(function(){});
     fetchMyUsername().then(function(u){ if (u) { PROFILE_CACHE.username = u; if (!cancelled) setUsername(u); } }).catch(function(){});
     fetchMyAvatar().then(function(u){ PROFILE_CACHE.avatar = u || null; if (!cancelled) setAvatar(u || null); }).catch(function(){});
     return function(){ cancelled = true; };
@@ -5236,14 +5403,18 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
     { label: t.membership, val: memberSince },
   ];
   var sectionLabel = { color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 };
-  // top 4 logged matches by rating → the Letterboxd "favourites" row (auto for now; can become a manual pick)
-  var favMatches = (logs || []).slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
+  // hand-picked favourites (ordered) if the user set any; otherwise the top-4 by rating
+  var favMatches = (function(){
+    var lgs = logs || [];
+    if (favIds.length){ var byId = {}; lgs.forEach(function(g){ byId[String(g.match_id)] = g; }); var picked = favIds.map(function(id){ return byId[String(id)]; }).filter(Boolean); if (picked.length) return picked; }
+    return lgs.slice().sort(function(a, b){ return Number(b.rating || 0) - Number(a.rating || 0); }).slice(0, 4);
+  })();
 
   function favStrip(list, kind) {
     return <div className="mo-scroll" style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
       {list.map(function(r){
-        return <div key={r.kind + r.ref_id} onClick={function(){ if (kind === "team") { if (onOpenTeam) onOpenTeam(r); } else { if (onOpenPlayer) onOpenPlayer(r); } }}
-          style={{ flexShrink: 0, width: 66, cursor: "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" }}>
+        return <div key={r.kind + r.ref_id} onClick={function(){ if (kind === "team") { if (onOpenTeam) onOpenTeam(r); } else if (kind === "player") { if (onOpenPlayer) onOpenPlayer(r); } }}
+          style={{ flexShrink: 0, width: 66, cursor: kind === "coach" ? "default" : "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" }}>
           <div style={{ width: 62, height: 62, borderRadius: "50%", margin: "0 auto 6px", background: COLORS.card,
             border: "1px solid " + COLORS.border, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             {r.image
@@ -5317,17 +5488,26 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
             <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{st.label}</div></div>; })}
         </div>
 
-        {/* Favori Maçlar — Letterboxd-style favourites row (top-rated logs) */}
-        {favMatches.length > 0 && <div style={{ marginBottom: 22 }}>
-          <div style={sectionLabel}>Favori Maçlar</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-            {favMatches.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+        {/* Favori Maçlar — Letterboxd-style, hand-pickable (falls back to top-rated) */}
+        {logs && logs.length > 0 && <div style={{ marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>Favori Maçlar</span>
+            <button onClick={function(){ setPicking(true); }} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 999, border: "1px solid " + COLORS.border, background: COLORS.card, color: COLORS.accent, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+              Seç
+            </button>
           </div>
+          {favMatches.length > 0
+            ? <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {favMatches.map(function(g){ return <MatchPoster key={g.id} g={g} t={t} onClick={function(){ setLogView(g); }} />; })}
+              </div>
+            : <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16, border: "1px solid " + COLORS.border }}>En sevdiğin maçları seç → profilinin vitrini.</div>}
         </div>}
 
-        {/* Favoriler: teams + players (coaches pending a favourite-coach source) */}
+        {/* Favoriler: teams + players + coaches (favourite a coach from a match lineup) */}
         {favTeams.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favTeams}</div>{favStrip(favTeams, "team")}</div>}
         {favPlayers.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>{t.favPlayers}</div>{favStrip(favPlayers, "player")}</div>}
+        {favCoaches.length > 0 && <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Favori Hocalar</div>{favStrip(favCoaches, "coach")}</div>}
         {favRecs.length === 0 && <div style={{ marginBottom: 22 }}>
           <div style={sectionLabel}>{t.favTeams}</div>
           <div style={{ color: COLORS.textMuted, fontSize: 13, padding: "14px", background: COLORS.card, borderRadius: 16 }}>{t.noFavorites}</div>
@@ -5335,6 +5515,32 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
 
         {/* Football DNA — your rating/prediction fingerprint */}
         <div style={{ marginBottom: 22 }}><div style={sectionLabel}>Taste Graph</div><FootballDNA t={t} /></div>
+
+        {/* Hot takes — where you diverge most from the community */}
+        {hotTakes.length > 0 && <div style={{ marginBottom: 22 }}>
+          <div style={sectionLabel}>En Aykırı Puanların</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {hotTakes.slice(0, 4).map(function(h){
+              var photo = "https://media.api-sports.io/football/players/" + h.target_id + ".png";
+              var higher = h.you > h.avg;
+              var col = higher ? COLORS.teal : COLORS.red;
+              return <div key={h.target_id + h.match_id} onClick={function(){ if (onOpenPlayer) onOpenPlayer({ ref_id: h.target_id, name: h.name, image: photo }); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: COLORS.card, borderRadius: 14, border: "1px solid " + COLORS.border, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+                <img src={photo} alt="" onError={function(e){ e.currentTarget.style.visibility = "hidden"; }} style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", background: COLORS.cardAlt, border: "1px solid " + COLORS.border, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: COLORS.textPrimary, fontSize: 13.5, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(h.name)}</div>
+                  <div style={{ color: COLORS.textMuted, fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>Topluluk {h.avg.toFixed(1)} · {h.cnt} kişi</div>
+                </div>
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ color: col, fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{h.you.toFixed(1)}</div>
+                  <div style={{ color: COLORS.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", marginTop: 2 }}>SEN</div>
+                </div>
+                <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 2, padding: "3px 8px", borderRadius: 999, background: col + "1F", color: col, fontSize: 11, fontWeight: 800 }}>
+                  {higher ? "▲" : "▼"} {h.diff.toFixed(1)}</span>
+              </div>;
+            })}
+          </div>
+        </div>}
 
         {/* Passport: stylised trophy map of grounds ATTENDED (shows a sample journey until real stadium logs exist) */}
         {logs && <div style={{ marginBottom: 22 }}>
@@ -5397,6 +5603,10 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
           t={t}
           onClose={function(){ setLogView(null); }}
           onDelete={function(){ return deleteMatchLog(logView.match_id).then(function(){ setLogs(function(cur){ return (cur || []).filter(function(x){ return x.id !== logView.id; }); }); }); }} />}
+
+        {picking && <FavMatchPicker logs={logs} initial={favIds} t={t}
+          onClose={function(){ setPicking(false); }}
+          onSave={function(ids){ setFavIds(ids); saveFavMatches(ids); }} />}
 
         <button onClick={onLogout} style={{ width: "100%", marginTop: 20, padding: 14, background: "transparent",
           border: "1px solid " + COLORS.red + "55", borderRadius: 16, color: COLORS.red, fontSize: 14,

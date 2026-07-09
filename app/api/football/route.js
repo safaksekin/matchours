@@ -1233,7 +1233,7 @@ export async function GET(request) {
         formation: entry.formation || null,
         starting: mapP(entry.startXI),
         bench: mapP(entry.substitutes),
-        coach: (entry.coach && entry.coach.name) || null,
+        coach: entry.coach && entry.coach.name ? { id: entry.coach.id != null ? String(entry.coach.id) : null, name: entry.coach.name, photo: entry.coach.photo || null } : null,
         teamId: entry.team && entry.team.id,
         color: color,
       };

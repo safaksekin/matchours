@@ -25,6 +25,66 @@ export async function updateUsername(username) {
   return { error: error || null };
 }
 
+// ── Favourite matches (up to 4 hand-picked match_ids, ordered) ──────────────
+export async function fetchFavMatches(userId) {
+  const uid = userId || await getUserId();
+  if (!uid) return [];
+  const { data } = await supabase.from("profiles").select("fav_matches").eq("id", uid).single();
+  return (data && Array.isArray(data.fav_matches)) ? data.fav_matches.map(String) : [];
+}
+export async function saveFavMatches(ids) {
+  const uid = await getUserId();
+  if (!uid) return { error: "not_logged_in" };
+  const clean = (ids || []).slice(0, 4).map(String);
+  const { error } = await supabase.from("profiles").update({ fav_matches: clean }).eq("id", uid);
+  return { error: error || null };
+}
+
+// A user's spiciest ratings — where they diverge most from the community consensus.
+export async function fetchHotTakes(userId) {
+  const uid = userId || (await getUserId());
+  if (!uid) return [];
+  const { data, error } = await supabase.rpc("user_hot_takes", { p_user: uid });
+  if (error) return [];
+  return (data || []).map(function (r) {
+    return { target_id: String(r.target_id), name: r.target_name, match_id: String(r.match_id),
+      you: Number(r.user_rating), avg: Number(r.avg_rating), cnt: Number(r.cnt), diff: Number(r.diff) };
+  }).filter(function (r) { return r.diff >= 1.5; });
+}
+
+// ── Taste compatibility ─────────────────────────────────────────────────────
+// A user's average rating per player (across all matches they rated that player in).
+export async function fetchUserPlayerAverages(userId) {
+  const uid = userId || (await getUserId());
+  if (!uid) return {};
+  const { data } = await supabase.from("ratings").select("target_id, rating")
+    .eq("user_id", uid).eq("target_type", "player").limit(2000);
+  const acc = {};
+  (data || []).forEach(function (r) { const k = String(r.target_id); if (!acc[k]) acc[k] = { s: 0, n: 0 }; acc[k].s += Number(r.rating); acc[k].n++; });
+  const out = {};
+  Object.keys(acc).forEach(function (k) { out[k] = acc[k].s / acc[k].n; });
+  return out;
+}
+
+// Taste-compatibility % between the current user and another: how similarly they rate the same
+// players + the same matches. Returns { pct, n } (pct null when overlap is too small to be meaningful).
+export async function fetchCompatibility(otherUserId) {
+  const me = await getUserId();
+  if (!me || !otherUserId || String(me) === String(otherUserId)) return null;
+  const [pa, pb, la, lb] = await Promise.all([
+    fetchUserPlayerAverages(me), fetchUserPlayerAverages(otherUserId),
+    fetchMyLogs(400), fetchUserLogs(otherUserId, 400),
+  ]);
+  const diffs = [];
+  Object.keys(pa).forEach(function (k) { if (pb[k] != null) diffs.push(Math.abs(pa[k] - pb[k])); });
+  const mine = {};
+  (la || []).forEach(function (g) { if (g.rating != null) mine[String(g.match_id)] = Number(g.rating); });
+  (lb || []).forEach(function (g) { const r = mine[String(g.match_id)]; if (r != null && g.rating != null) diffs.push(Math.abs(r - Number(g.rating))); });
+  if (diffs.length < 3) return { pct: null, n: diffs.length };
+  const d = diffs.reduce(function (s, x) { return s + x; }, 0) / diffs.length;
+  return { pct: Math.max(0, Math.min(100, Math.round(100 * (1 - d / 5)))), n: diffs.length };
+}
+
 // ── Avatars (profile photo) ─────────────────────────────────────────────────
 export async function fetchMyAvatar() {
   const uid = await getUserId();
