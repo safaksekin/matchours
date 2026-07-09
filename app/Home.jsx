@@ -5095,6 +5095,21 @@ function useWorldGeo() {
   return w;
 }
 
+// ~3900 football stadiums worldwide (name, lat, lng, capacity) from Wikidata, sorted by capacity
+// so the biggest surface first as you zoom — bundled, so no live queries (Overpass was too slow).
+var STAD_CACHE = null, STAD_PROMISE = null;
+function useWorldStadiums() {
+  var [s, setS] = useState(STAD_CACHE);
+  useEffect(function(){
+    if (STAD_CACHE) { if (!s) setS(STAD_CACHE); return; }
+    if (typeof window === "undefined") return;
+    if (!STAD_PROMISE) STAD_PROMISE = fetch("/stadiums-world.json").then(function(r){ return r.json(); }).then(function(a){ a.sort(function(x, y){ return (y[3] || 0) - (x[3] || 0); }); STAD_CACHE = a; return a; }).catch(function(){ return null; });
+    var c = false; STAD_PROMISE.then(function(a){ if (!c && a) setS(a); });
+    return function(){ c = true; };
+  }, []);
+  return s;
+}
+
 // Football Passport — a stylised, zoomed-out "trophy map" of grounds the user has ATTENDED.
 // Deliberately not a literal atlas (no tiles/deps): a flight-map constellation that is on-brand,
 // offline-safe and RN-portable. Only attended logs light a pin → the map IS the stadium-vs-TV moat.
@@ -5145,6 +5160,21 @@ function PassportMap({ logs, t }) {
   var offX = (W - (maxPx - minPx) * scale) / 2 - minPx * scale;
   var offY = (H - (maxPy - minPy) * scale) / 2 - minPy * scale;
   function P(lat, lng){ return [lng * k * scale + offX, -lat * scale + offY]; }
+  // invert a base-SVG x/y (before the pan/zoom <g> transform) back to lng/lat
+  function invLng(px){ return (px - offX) / (k * scale); }
+  function invLat(py){ return -(py - offY) / scale; }
+
+  // world stadium dataset (local, instant) — show those inside the view once zoomed in a bit.
+  // Sorted biggest-first, so majors surface at wider zoom and smaller grounds fill in as you go deeper.
+  var worldSt = useWorldStadiums();
+  var nearby = [];
+  if (worldSt) {
+    var bx0 = (0 - view.tx) / view.z, bx1 = (W - view.tx) / view.z, by0 = (0 - view.ty) / view.z, by1 = (H - view.ty) / view.z;
+    var vW = Math.min(invLng(bx0), invLng(bx1)), vE = Math.max(invLng(bx0), invLng(bx1)), vS = Math.min(invLat(by0), invLat(by1)), vN = Math.max(invLat(by0), invLat(by1));
+    if ((vE - vW) < 15 && (vN - vS) < 15) {
+      for (var wi = 0; wi < worldSt.length && nearby.length < 140; wi++){ var ws = worldSt[wi]; if (ws[1] >= vS && ws[1] <= vN && ws[2] >= vW && ws[2] <= vE) nearby.push(ws); }
+    }
+  }
 
   // real landmasses within view, projected to the same coordinate space as the pins
   var world = useWorldGeo();
@@ -5161,16 +5191,17 @@ function PassportMap({ logs, t }) {
     });
   }
 
+  // T = pin's on-screen position AFTER pan/zoom. Pins are drawn OUTSIDE the scaled <g> at this
+  // position but at a CONSTANT radius, so zooming spreads them apart without inflating them.
+  function T(lat, lng){ var p = P(lat, lng); return [view.tx + p[0] * view.z, view.ty + p[1] * view.z]; }
+  function onScreen(xy){ return xy[0] > 4 && xy[0] < W - 4 && xy[1] > 4 && xy[1] < H - 4; }
   var visitedNames = {}; visited.forEach(function(v){ visitedNames[v.st.name] = 1; });
-  var locked = STADIUMS.filter(function(st){
-    if (visitedNames[st.name]) return false;
-    var p = P(st.lat, st.lng); return p[0] > 6 && p[0] < W - 6 && p[1] > 6 && p[1] < H - 6;
-  });
+  var locked = STADIUMS.filter(function(st){ return !visitedNames[st.name] && onScreen(T(st.lat, st.lng)); });
   // graticule: projected lat/lng grid lines → reads as a map, not a dot field
   var grid = [];
   for (var ln = Math.ceil(b.w / 10) * 10; ln <= b.e; ln += 10) { var gA = P(b.n, ln), gB = P(b.s, ln); grid.push([gA[0], gA[1], gB[0], gB[1]]); }
   for (var la = Math.ceil(b.s / 8) * 8; la <= b.n; la += 8) { var gC = P(la, b.w), gD = P(la, b.e); grid.push([gC[0], gC[1], gD[0], gD[1]]); }
-  var journey = visited.map(function(v){ var p = P(v.st.lat, v.st.lng); return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+  var journey = visited.map(function(v){ var p = T(v.st.lat, v.st.lng); return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
   var stat = function(n, l){ return <div style={{ flex: 1, textAlign: "center" }}>
     <div style={{ color: COLORS.accent, fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{n}</div>
     <div style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>{l}</div></div>; };
@@ -5184,7 +5215,7 @@ function PassportMap({ logs, t }) {
     setSel({ st: st, x: ux, y: uy, above: uy > r.height * 0.48, vis: vis });
   }
   function clampView(v){ var mnx = W - W * v.z, mny = H - H * v.z; return { z: v.z, tx: Math.min(0, Math.max(mnx, v.tx)), ty: Math.min(0, Math.max(mny, v.ty)) }; }
-  function zoomBy(factor, S, Sy){ setView(function(v){ var nz = Math.min(6, Math.max(1, v.z * factor)); var cx = (S - v.tx) / v.z, cy = (Sy - v.ty) / v.z; return clampView({ z: nz, tx: S - cx * nz, ty: Sy - cy * nz }); }); }
+  function zoomBy(factor, S, Sy){ setView(function(v){ var nz = Math.min(64, Math.max(1, v.z * factor)); var cx = (S - v.tx) / v.z, cy = (Sy - v.ty) / v.z; return clampView({ z: nz, tx: S - cx * nz, ty: Sy - cy * nz }); }); }
   function evUser(cx, cy){ var r = mapRef.current.getBoundingClientRect(); return [(cx - r.left) / r.width * W, (cy - r.top) / r.height * H]; }
   function onDown(e){ if (e.currentTarget.setPointerCapture) try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {} ptrs.current[e.pointerId] = { x: e.clientX, y: e.clientY }; dragged.current = false; pinch.current = null; }
   function onMove(e){
@@ -5210,25 +5241,38 @@ function PassportMap({ logs, t }) {
       <svg viewBox={"0 0 " + W + " " + H} width="100%"
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}
         style={{ display: "block", touchAction: "none", cursor: view.z > 1 ? "grab" : "default", background: "linear-gradient(180deg, var(--cardAlt, rgba(120,90,240,0.05)), transparent)" }}>
+        {/* map geometry scales with zoom */}
         <g transform={"translate(" + view.tx.toFixed(2) + " " + view.ty.toFixed(2) + ") scale(" + view.z.toFixed(3) + ")"}>
-        {land.map(function(d, i){ return <path key={"ld" + i} d={d} fillRule="evenodd" fill="color-mix(in srgb, var(--accent) 12%, var(--card))" stroke="color-mix(in srgb, var(--accent) 26%, transparent)" strokeWidth="0.5" />; })}
-        {grid.map(function(l, i){ return <line key={i} x1={l[0]} y1={l[1]} x2={l[2]} y2={l[3]} stroke={COLORS.border} strokeWidth="0.6" opacity="0.35" />; })}
+          {land.map(function(d, i){ return <path key={"ld" + i} d={d} fillRule="evenodd" fill="color-mix(in srgb, var(--accent) 12%, var(--card))" stroke="color-mix(in srgb, var(--accent) 26%, transparent)" strokeWidth="0.5" />; })}
+          {grid.map(function(l, i){ return <line key={i} x1={l[0]} y1={l[1]} x2={l[2]} y2={l[3]} stroke={COLORS.border} strokeWidth="0.6" opacity="0.35" />; })}
+        </g>
+        {/* pins: transformed position, constant size (they're markers, not photo content) */}
         {visited.length > 1 && <polyline points={journey} fill="none" stroke={COLORS.accent} strokeWidth="1.2" strokeDasharray="3 4" strokeLinecap="round" opacity="0.55" />}
-        {locked.map(function(st, i){ var p = P(st.lat, st.lng); var on = sel && sel.st.name === st.name; return <g key={"l" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(st, p, false, e); }}>
-          <circle cx={p[0]} cy={p[1]} r="12" fill="transparent" />
-          <circle cx={p[0]} cy={p[1]} r={on ? 5.4 : 4.4} fill={COLORS.card} stroke={on ? COLORS.accent : COLORS.textSecondary} strokeWidth="1.6" opacity="0.95" />
-          <circle cx={p[0]} cy={p[1]} r="1.5" fill={COLORS.textMuted} />
+        {locked.map(function(st, i){ var ps = T(st.lat, st.lng), pb = P(st.lat, st.lng); var on = sel && sel.st.name === st.name; return <g key={"l" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(st, pb, false, e); }}>
+          <circle cx={ps[0]} cy={ps[1]} r="12" fill="transparent" />
+          <circle cx={ps[0]} cy={ps[1]} r={on ? 5.4 : 4.4} fill={COLORS.card} stroke={on ? COLORS.accent : COLORS.textSecondary} strokeWidth="1.6" opacity="0.95" />
+          <circle cx={ps[0]} cy={ps[1]} r="1.5" fill={COLORS.textMuted} />
         </g>; })}
-        {visited.map(function(v, i){ var p = P(v.st.lat, v.st.lng); return <g key={"v" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(v.st, p, true, e); }}>
-          <circle cx={p[0]} cy={p[1]} r="12" fill="transparent" />
-          <circle cx={p[0]} cy={p[1]} r="9" fill={COLORS.accent} opacity="0.16" />
-          <circle cx={p[0]} cy={p[1]} r="4.6" fill={COLORS.accent}>
+        {nearby.map(function(s, i){
+          var lat = s[1], lng = s[2];
+          if (STADIUMS.some(function(st){ return Math.abs(st.lat - lat) < 0.02 && Math.abs(st.lng - lng) < 0.02; })) return null; // avoid duping curated
+          if (visited.some(function(v){ return Math.abs(v.st.lat - lat) < 0.02 && Math.abs(v.st.lng - lng) < 0.02; })) return null;
+          var ps = T(lat, lng); if (!onScreen(ps)) return null;
+          var pb = P(lat, lng);
+          return <g key={"o" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt({ name: s[0], cap: s[3] || null, lat: lat, lng: lng, osm: true }, pb, false, e); }}>
+            <circle cx={ps[0]} cy={ps[1]} r="9" fill="transparent" />
+            <circle cx={ps[0]} cy={ps[1]} r="3.8" fill={COLORS.card} stroke={COLORS.textSecondary} strokeWidth="1.4" opacity="0.9" />
+            <circle cx={ps[0]} cy={ps[1]} r="1.4" fill={COLORS.textMuted} />
+          </g>; })}
+        {visited.map(function(v, i){ var ps = T(v.st.lat, v.st.lng), pb = P(v.st.lat, v.st.lng); if (!onScreen(ps)) return null; return <g key={"v" + i} style={{ cursor: "pointer" }} onClick={function(e){ openSt(v.st, pb, true, e); }}>
+          <circle cx={ps[0]} cy={ps[1]} r="12" fill="transparent" />
+          <circle cx={ps[0]} cy={ps[1]} r="9" fill={COLORS.accent} opacity="0.16" />
+          <circle cx={ps[0]} cy={ps[1]} r="4.6" fill={COLORS.accent}>
             <animate attributeName="opacity" values="1;0.55;1" dur="2.6s" repeatCount="indefinite" begin={(i * 0.3) + "s"} />
           </circle>
-          <circle cx={p[0]} cy={p[1]} r="2" fill="#fff" opacity="0.9" />
-          {visited.length <= 10 && <text x={p[0]} y={p[1] - 8} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={COLORS.textSecondary} style={{ fontFamily: FONT, pointerEvents: "none" }}>{v.st.city}</text>}
+          <circle cx={ps[0]} cy={ps[1]} r="2" fill="#fff" opacity="0.9" />
+          {visited.length <= 10 && <text x={ps[0]} y={ps[1] - 8} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={COLORS.textSecondary} style={{ fontFamily: FONT, pointerEvents: "none" }}>{v.st.city}</text>}
         </g>; })}
-        </g>
       </svg>
       <div style={{ position: "absolute", right: 8, bottom: 8, display: "flex", flexDirection: "column", gap: 6, zIndex: 5 }}>
         {[["+", 1], ["–", -1]].map(function(b){ return <button key={b[0]} onClick={function(e){ zoomBtn(b[1], e); }} aria-label="zoom" style={{ width: 30, height: 30, borderRadius: 9, border: "1px solid " + COLORS.border, background: "color-mix(in srgb, var(--card) 82%, transparent)", color: COLORS.textPrimary, fontSize: 17, fontWeight: 800, lineHeight: 1, cursor: "pointer", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", WebkitTapHighlightColor: "transparent" }}>{b[0]}</button>; })}
@@ -5252,7 +5296,7 @@ function PassportMap({ logs, t }) {
       {Object.keys(countries).map(function(c){ return <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 999, background: COLORS.accentDim, color: COLORS.accent, fontSize: 11, fontWeight: 700 }}>
         <span style={{ fontSize: 12 }}>{countries[c]}</span>{c}</span>; })}
     </div>}
-    {sel && <StadiumPopup sel={sel} onClose={function(){ setSel(null); }} />}
+    {sel && <StadiumPopup key={sel.st.name + ":" + (sel.st.lat || "")} sel={sel} onClose={function(){ setSel(null); }} />}
   </div>;
 }
 
@@ -5285,7 +5329,9 @@ function StadiumPopup({ sel, onClose }) {
     boxShadow: "0 14px 36px rgba(0,0,0,0.34)", overflow: "hidden", fontFamily: FONT, animation: "mo-pop 0.18s ease-out" }}>
     <div style={{ position: "relative", height: 104, background: "linear-gradient(135deg, " + COLORS.accent + ", " + COLORS.teal + ")", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
       {showImg && <img src={photo} alt="" onError={function(){ setFailed(true); }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />}
-      {!showImg && <span style={{ fontSize: 40 }}>{st.flag}</span>}
+      {!showImg && (st.flag
+        ? <span style={{ fontSize: 40 }}>{st.flag}</span>
+        : <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="12" rx="9" ry="5.5" /><path d="M4 12c0-2 3.6-3.5 8-3.5s8 1.5 8 3.5" /><path d="M12 8.5v7" /></svg>)}
       <button onClick={function(e){ e.stopPropagation(); onClose(); }} aria-label="kapat" style={{ position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.44)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
@@ -5293,10 +5339,10 @@ function StadiumPopup({ sel, onClose }) {
     </div>
     <div style={{ padding: "10px 12px 12px" }}>
       <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>{st.name}</div>
-      <div style={{ color: COLORS.textMuted, fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>{st.flag} {st.city} · {st.country}</div>
+      <div style={{ color: COLORS.textMuted, fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>{[st.flag, [st.city, st.country].filter(Boolean).join(" · ")].filter(Boolean).join(" ") || (st.osm ? "OpenStreetMap · amatör" : "")}</div>
       <div style={{ height: 1, background: COLORS.border, margin: "9px 0" }} />
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}><span style={{ color: COLORS.textMuted }}>Kapasite</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{st.cap ? st.cap.toLocaleString("tr-TR") : "—"}</span></div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: COLORS.textMuted }}>Takım</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, textAlign: "right", maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.team || "—"}</span></div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: st.osm ? 0 : 5 }}><span style={{ color: COLORS.textMuted }}>Kapasite</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{st.cap ? st.cap.toLocaleString("tr-TR") : "—"}</span></div>
+      {!st.osm && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: COLORS.textMuted }}>Takım</span><span style={{ color: COLORS.textPrimary, fontWeight: 700, textAlign: "right", maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{st.team || "—"}</span></div>}
     </div>
     <span aria-hidden style={{ position: "absolute", left: "50%", marginLeft: -6, width: 12, height: 12, background: COLORS.card,
       borderRight: sel.above ? "1px solid " + COLORS.border : "none", borderBottom: sel.above ? "1px solid " + COLORS.border : "none",
