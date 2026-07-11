@@ -4395,25 +4395,28 @@ function SearchResults({ teams, matches, players, searching, isF1, t, onOpenMatc
   var box = { background: COLORS.card, borderRadius: 22, border: "1px solid " + COLORS.border, padding: 8 };
   var empty = { color: COLORS.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" };
   var drop = function(delay){ return { animation: "moDrop 0.34s cubic-bezier(0.22,1,0.36,1) both", animationDelay: delay }; };
+  var topTeams = (teams || []).slice(0, 3);
+  var topPlayers = (players || []).slice(0, 3);
+  var topMatches = (matches || []).slice(0, 5);
   return <div className="mo-container">
-    {teams && teams.length > 0 && <div style={Object.assign({ marginBottom: 22 }, drop("0s"))}>
+    {topTeams.length > 0 && <div style={Object.assign({ marginBottom: 22 }, drop("0s"))}>
       <div style={titleStyle}>{t.teamsLabel}</div>
-      <div style={box}>{teams.map(function(tm){
+      <div style={box}>{topTeams.map(function(tm){
         return <TeamRow key={tm.id} team={tm} t={t} onOpen={function(){ onOpenTeam(tm); }} />; })}</div>
     </div>}
     <div style={Object.assign({ marginBottom: 22 }, drop("0.07s"))}>
-      <div style={titleStyle}>{t.matches}</div>
-      {searching && matches.length === 0 ? <div style={empty}>{t.loading}</div>
-       : matches.length === 0 ? <div style={empty}>{t.noMatches}</div>
-       : <div style={box}>{matches.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t} showDate={true}
-           divider={i < matches.length - 1} onOpen={function(){ onOpenMatch(m); }} />; })}</div>}
-    </div>
-    <div style={drop("0.14s")}>
       <div style={titleStyle}>{t.players}</div>
       {searching ? <div style={empty}>{t.loading}</div>
-       : players.length === 0 ? <div style={empty}>{t.noPlayerFound}</div>
-       : <div style={box}>{players.map(function(p){ return <PlayerRow key={p.id} player={p} t={t}
+       : topPlayers.length === 0 ? <div style={empty}>{t.noPlayerFound}</div>
+       : <div style={box}>{topPlayers.map(function(p){ return <PlayerRow key={p.id} player={p} t={t}
            onOpen={function(){ onOpenPlayer(p); }} />; })}</div>}
+    </div>
+    <div style={drop("0.14s")}>
+      <div style={titleStyle}>{t.matches}</div>
+      {searching && topMatches.length === 0 ? <div style={empty}>{t.loading}</div>
+       : topMatches.length === 0 ? <div style={empty}>{t.noMatches}</div>
+       : <div style={box}>{topMatches.map(function(m, i){ return <MatchRow key={m.id} match={m} isF1={isF1} t={t} showDate={true}
+           divider={i < topMatches.length - 1} onOpen={function(){ onOpenMatch(m); }} />; })}</div>}
     </div>
   </div>;
 }
@@ -6437,7 +6440,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   // debounced player search (API). Matches are filtered locally below.
   useEffect(function(){
     var q = query.trim();
-    if (q.length < 3) { setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); return; }
+    if (q.length < 2) { setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); return; }
     setSearching(true);
     var id = setTimeout(function(){
       fetch("/api/football?mode=search&q=" + encodeURIComponent(q))

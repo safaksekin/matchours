@@ -2,6 +2,8 @@
 // API-Football (api-sports.io) — direct access.
 // .env.local:  APISPORTS_KEY=your_api_key_here
 
+import { POP_TEAMS, POP_PLAYERS, popRank, popOf } from "../../lib/popular";
+
 const HOST = "https://v3.football.api-sports.io";
 
 // league id + season (season = starting year; 2025/26 -> 2025, World Cup 2026 -> 2026)
@@ -298,17 +300,27 @@ export async function GET(request) {
 
   // ── Search: team fixtures + players by name ──
   if (mode === "search") {
-    const q = searchSafe(searchParams.get("q") || ""); // fold Turkish/accents; API needs ASCII
-    if (q.length < 3) return Response.json({ matches: [], players: [] });
+    const qRaw = searchParams.get("q") || "";
+    const q = searchSafe(qRaw); // fold Turkish/accents; API needs ASCII
+    if (q.length < 2) return Response.json({ teams: [], matches: [], players: [] });
 
     // Players: API stores abbreviated first names ("E. Haaland", "A. Güler"), so the profile
     // search matches the surname best. For multi-word input search by the last token (surname),
     // then re-rank the candidates against ALL typed tokens so the right player isn't buried.
     const qTokens = q.toLowerCase().split(/\s+/).filter(Boolean);
     const pq = qTokens.length > 1 ? qTokens[qTokens.length - 1] : q;
-    const playerRaw = (pq.length >= 3)
-      ? await apiGet("/players/profiles?search=" + encodeURIComponent(pq), 3600)
-      : null;
+    // The API player search misses short/Turkish queries ("mes"->0, "yam"->0). Expand via the
+    // popular-players list so famous names are found and re-ranked to the top.
+    const popP = popRank(POP_PLAYERS, q);
+    const playerTerms = [];
+    if (pq.length >= 3) playerTerms.push(pq);
+    popP.slice(0, 4).forEach(function (x) { if (playerTerms.indexOf(x.e.en) === -1) playerTerms.push(x.e.en); });
+    const playerLists = await Promise.all(playerTerms.map(function (term) {
+      return apiGet("/players/profiles?search=" + encodeURIComponent(term), 3600).then(function (d) { return d || []; }).catch(function () { return []; });
+    }));
+    const seenPl = {};
+    const playerRaw = [];
+    playerLists.forEach(function (lst) { (lst || []).forEach(function (it) { const pid = it.player && it.player.id; if (pid != null && !seenPl[pid]) { seenPl[pid] = 1; playerRaw.push(it); } }); });
     function pscore(p) {
       const hay = searchSafe(((p.name || "") + " " + (p.firstname || "") + " " + (p.lastname || ""))).toLowerCase();
       const words = hay.split(/\s+/).filter(Boolean);
@@ -322,9 +334,10 @@ export async function GET(request) {
     }
     const players = (playerRaw || [])
       .map(function (it) { return it.player || {}; })
-      .map(function (p) { return { p: p, sc: pscore(p) }; })
+      .map(function (p) { return { p: p, sc: pscore(p) * 10 + popOf(POP_PLAYERS, (p.name || "") + " " + (p.lastname || ""), true) }; })
       .sort(function (a, b) { if (b.sc !== a.sc) return b.sc - a.sc; return (a.p.id || 0) - (b.p.id || 0); })
-      .slice(0, 25)
+      .filter(function (x) { return x.sc > 0; })
+      .slice(0, 12)
       .map(function (x) {
         const p = x.p;
         return {
@@ -371,25 +384,40 @@ export async function GET(request) {
     };
     const mapTeam = function (tt) { return { id: tt.id, name: tt.name, logo: tt.logo, country: tt.country || null }; };
 
-    const teamFull = await apiGet("/teams?search=" + encodeURIComponent(q), 3600);
-    // rank every matching team so partial queries surface suggestions ("milan" -> Milan; "real" -> Real Madrid/Sociedad/Betis...)
+    // Expand the team query with popular clubs/countries so "arjantin"->Argentina, "ju"->Juventus,
+    // and famous clubs get fetched even when the API's raw search ranks or misses them.
+    const popT = popRank(POP_TEAMS, q);
+    const teamTerms = [];
+    if (q.length >= 3) teamTerms.push(q);
+    popT.slice(0, 4).forEach(function (x) { if (teamTerms.indexOf(x.e.en) === -1) teamTerms.push(x.e.en); });
+    const teamLists = await Promise.all(teamTerms.map(function (term) {
+      return apiGet("/teams?search=" + encodeURIComponent(term), 3600).then(function (d) { return d || []; }).catch(function () { return []; });
+    }));
+    const seenTm = {};
+    const teamFull = [];
+    teamLists.forEach(function (lst) { (lst || []).forEach(function (it) { const tid = it.team && it.team.id; if (tid != null && !seenTm[tid]) { seenTm[tid] = 1; teamFull.push(it); } }); });
+
+    // rank by string match, but let FAME dominate ties so "mil"->AC Milan (not Millwall), "rea"->Real Madrid
     const teamRanked = [];
-    (teamFull || []).forEach(function (it) {
+    teamFull.forEach(function (it) {
       const tt = it.team || {};
       const nm = searchSafe(tt.name || "").toLowerCase();
       if (!nm) return;
-      let s = 0;
-      if (nm === ql || nm.indexOf(ql) === 0) s = 3; // exact OR starts-with (id breaks ties -> well-known clubs first)
-      else if (nm.indexOf(ql) >= 0) s = 2;          // contains the query
-      else if (ql.indexOf(nm) >= 0) s = 1;          // query contains the name
-      if (s <= 0) return;
-      if (isVariant(tt.name)) s -= 2;
-      if (s > 0) teamRanked.push({ t: tt, s: s });
+      let base = 0;
+      if (nm === ql || nm.indexOf(ql) === 0) base = 3;   // exact / starts-with
+      else if (nm.indexOf(ql) >= 0) base = 2;             // contains
+      else if (ql.indexOf(nm) >= 0) base = 1;             // query contains name
+      const pop = popOf(POP_TEAMS, tt.name);              // 0..100 fame
+      if (base <= 0 && pop <= 0) return;                  // irrelevant and unknown → drop
+      if (isVariant(tt.name)) base -= 2;
+      teamRanked.push({ t: tt, base: base, total: base * 40 + pop });
     });
-    teamRanked.sort(function (a, b) { if (b.s !== a.s) return b.s - a.s; return (a.t.id || 0) - (b.t.id || 0); });
-    const topTeams = teamRanked.slice(0, 6).map(function (x) { return x.t; });
-    // enter single-team mode (and skip H2H) only when the top match is strong (contains / prefix / exact)
-    let single = (teamRanked.length && teamRanked[0].s >= 2) ? teamRanked[0].t : null;
+    teamRanked.sort(function (a, b) { if (b.total !== a.total) return b.total - a.total; return (a.t.id || 0) - (b.t.id || 0); });
+    const topTeams = teamRanked.slice(0, 8).map(function (x) { return x.t; });
+    // single-team mode when the top result clearly IS the query: a strong string match, or a strong
+    // single-word popular hit ("arjantin"/"real"/"ju") — so we pull that team's fixtures.
+    const strongPopular = qTokens.length === 1 && popT.length && popT[0].m >= 3;
+    let single = teamRanked.length && (teamRanked[0].base >= 2 || strongPopular) ? teamRanked[0].t : null;
 
     const teamsOut = [];
     const matchesOut = [];
@@ -1373,8 +1401,11 @@ export async function GET(request) {
           side: side,
           rating: games.rating != null ? parseFloat(games.rating) : null,
           minutes: games.minutes != null ? games.minutes : 0, // 0/null => did not play
+          position: games.position || null, // G/D/M/F — lets the client show keeper-specific stats
           goals: goals.total || 0,
           assists: goals.assists || 0,
+          saves: goals.saves || 0,        // goalkeeper saves
+          conceded: goals.conceded || 0,  // goals conceded (keeper)
           shotsTotal: shots.total || 0,
           shotsOn: shots.on || 0,
           passesTotal: passTotal,
