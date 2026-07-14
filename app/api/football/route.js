@@ -773,6 +773,13 @@ export async function GET(request) {
       venueId: venueId,
       image: image,
       fixture: item ? mapFixture(item, item.league && item.league.name) : null,
+    }, {
+      // The native app's Passport MAP popup fetches this from INSIDE a WebView (opaque origin) → needs CORS.
+      // Short edge cache so repeat taps across users don't re-run the lookup.
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600",
+      },
     });
   }
 
