@@ -694,6 +694,59 @@ export async function GET(request) {
     });
   }
 
+  // ── Venue backdrop + the next match played there (native app: Passport map popup) ──
+  // The app sends the stadium `name` (+ a `team` hint). We resolve the API-Football venue → its photo
+  // and id, then find the soonest UPCOMING fixture at that ground: PRIMARY the venue filter, FALLBACK
+  // the ground's home team's next home game. Returns { venueId, image, fixture|null }. All calls go
+  // through apiGet so they're Cloudflare-edge cached (venue lookup 30d, fixtures 15m).
+  if (mode === "venue") {
+    const name = (searchParams.get("name") || "").trim();
+    const teamHint = (searchParams.get("team") || "").trim();
+    if (name.length < 3) return Response.json({ venueId: null, image: null, fixture: null });
+
+    // 1) resolve the venue → id + image (venues are ~immutable → cache 30d)
+    const vlist = await apiGet("/venues?search=" + encodeURIComponent(searchSafe(name)), 2592000);
+    let venue = null;
+    if (vlist && vlist.length) {
+      const target = searchSafe(name).toLowerCase();
+      let best = null;
+      vlist.forEach(function (v) {
+        const nm = searchSafe(v.name || "").toLowerCase();
+        if (!nm) return;
+        let s = 1;
+        if (nm === target) s = 3;
+        else if (nm.indexOf(target) >= 0 || target.indexOf(nm) >= 0) s = 2;
+        if (!best || s > best.s) best = { v: v, s: s };
+      });
+      venue = best ? best.v : vlist[0];
+    }
+    const venueId = venue ? venue.id : null;
+    const image = venue ? (venue.image || null) : null;
+
+    // 2) next fixture at this venue. Primary: the venue filter. Fallback: the home team's next games.
+    let item = null;
+    if (venueId) {
+      const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
+      if (byVenue && byVenue.length) item = byVenue[0];
+    }
+    if (!item && teamHint) {
+      const td = await apiGet("/teams?search=" + encodeURIComponent(searchSafe(teamHint)), 86400);
+      const team = td && td[0] && td[0].team;
+      if (team) {
+        const fx = await apiGet("/fixtures?team=" + team.id + "&next=10", 900);
+        const homeGames = (fx || []).filter(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(team.id); });
+        const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
+        item = atVenue[0] || homeGames[0] || (fx && fx[0]) || null;
+      }
+    }
+
+    return Response.json({
+      venueId: venueId,
+      image: image,
+      fixture: item ? mapFixture(item, item.league && item.league.name) : null,
+    });
+  }
+
   // ── Diagnostic: api-sports account plan + rate limits (temporary) ──
   if (mode === "quota") {
     try {
