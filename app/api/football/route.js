@@ -702,14 +702,28 @@ export async function GET(request) {
   if (mode === "venue") {
     const name = (searchParams.get("name") || "").trim();
     const teamHint = (searchParams.get("team") || "").trim();
-    if (name.length < 3 && teamHint.length < 3) return Response.json({ venueId: null, image: null, fixture: null });
+    const teamIdParam = (searchParams.get("teamId") || "").trim();
+    if (name.length < 3 && teamHint.length < 3 && !teamIdParam) return Response.json({ venueId: null, image: null, fixture: null });
 
     const isVariant = function (nm) { return /\bU\s?\d{2}\b|women|\bW\b|\bII\b|\bB\b/i.test(nm || ""); };
     let venueId = null, image = null, teamId = null;
 
-    // 1) PREFER the ground's home team — /teams?search returns the team AND its venue (id + image).
-    //    Far more reliable than matching a sponsor/multi-word stadium name against /venues.
-    if (teamHint) {
+    // 0) BEST: an exact API-Football team id baked into the app's stadium data → /teams?id is exact
+    //    (no fuzzy name search) and returns the team's venue id + image directly.
+    if (teamIdParam) {
+      const td = await apiGet("/teams?id=" + encodeURIComponent(teamIdParam), 86400);
+      const e = td && td[0];
+      if (e) {
+        teamId = (e.team && e.team.id) || parseInt(teamIdParam, 10) || null;
+        const vn = e.venue || {};
+        venueId = vn.id || null;
+        image = vn.image || null;
+      }
+    }
+
+    // 1) else resolve via the ground's home team NAME — /teams?search returns team + venue (id + image).
+    //    Fuzzier than an id, but fine when no baked id is available.
+    if (!teamId && teamHint) {
       const td = await apiGet("/teams?search=" + encodeURIComponent(searchSafe(teamHint)), 86400);
       const tgt = searchSafe(teamHint).toLowerCase();
       let best = null;
