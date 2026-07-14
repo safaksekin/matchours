@@ -702,42 +702,57 @@ export async function GET(request) {
   if (mode === "venue") {
     const name = (searchParams.get("name") || "").trim();
     const teamHint = (searchParams.get("team") || "").trim();
-    if (name.length < 3) return Response.json({ venueId: null, image: null, fixture: null });
+    if (name.length < 3 && teamHint.length < 3) return Response.json({ venueId: null, image: null, fixture: null });
 
-    // 1) resolve the venue → id + image (venues are ~immutable → cache 30d)
-    const vlist = await apiGet("/venues?search=" + encodeURIComponent(searchSafe(name)), 2592000);
-    let venue = null;
-    if (vlist && vlist.length) {
+    const isVariant = function (nm) { return /\bU\s?\d{2}\b|women|\bW\b|\bII\b|\bB\b/i.test(nm || ""); };
+    let venueId = null, image = null, teamId = null;
+
+    // 1) PREFER the ground's home team — /teams?search returns the team AND its venue (id + image).
+    //    Far more reliable than matching a sponsor/multi-word stadium name against /venues.
+    if (teamHint) {
+      const td = await apiGet("/teams?search=" + encodeURIComponent(searchSafe(teamHint)), 86400);
+      const tgt = searchSafe(teamHint).toLowerCase();
+      let best = null;
+      (td || []).forEach(function (e) {
+        const tt = e.team || {}, nm = searchSafe(tt.name || "").toLowerCase();
+        if (!nm) return;
+        let s = nm === tgt ? 3 : (nm.indexOf(tgt) >= 0 || tgt.indexOf(nm) >= 0 ? 2 : 1);
+        if (isVariant(tt.name)) s -= 2;
+        if (!best || s > best.s) best = { e: e, s: s };
+      });
+      if (best) {
+        teamId = best.e.team && best.e.team.id;
+        const vn = best.e.venue || {};
+        venueId = vn.id || null;
+        image = vn.image || null;
+      }
+    }
+
+    // 2) fallback: resolve the venue by stadium name (national/neutral grounds with no club team)
+    if (!venueId && name.length >= 3) {
+      const vlist = await apiGet("/venues?search=" + encodeURIComponent(searchSafe(name)), 2592000);
       const target = searchSafe(name).toLowerCase();
       let best = null;
-      vlist.forEach(function (v) {
+      (vlist || []).forEach(function (v) {
         const nm = searchSafe(v.name || "").toLowerCase();
         if (!nm) return;
-        let s = 1;
-        if (nm === target) s = 3;
-        else if (nm.indexOf(target) >= 0 || target.indexOf(nm) >= 0) s = 2;
+        let s = nm === target ? 3 : (nm.indexOf(target) >= 0 || target.indexOf(nm) >= 0 ? 2 : 1);
         if (!best || s > best.s) best = { v: v, s: s };
       });
-      venue = best ? best.v : vlist[0];
+      if (best) { venueId = best.v.id || null; image = best.v.image || null; }
     }
-    const venueId = venue ? venue.id : null;
-    const image = venue ? (venue.image || null) : null;
 
-    // 2) next fixture at this venue. Primary: the venue filter. Fallback: the home team's next games.
+    // 3) next fixture: PRIMARY the venue filter, FALLBACK the home team's next home game
     let item = null;
     if (venueId) {
       const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
       if (byVenue && byVenue.length) item = byVenue[0];
     }
-    if (!item && teamHint) {
-      const td = await apiGet("/teams?search=" + encodeURIComponent(searchSafe(teamHint)), 86400);
-      const team = td && td[0] && td[0].team;
-      if (team) {
-        const fx = await apiGet("/fixtures?team=" + team.id + "&next=10", 900);
-        const homeGames = (fx || []).filter(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(team.id); });
-        const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
-        item = atVenue[0] || homeGames[0] || (fx && fx[0]) || null;
-      }
+    if (!item && teamId) {
+      const fx = await apiGet("/fixtures?team=" + teamId + "&next=10", 900);
+      const homeGames = (fx || []).filter(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(teamId); });
+      const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
+      item = atVenue[0] || homeGames[0] || null;
     }
 
     return Response.json({
