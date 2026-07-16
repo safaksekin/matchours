@@ -218,6 +218,30 @@ function mapFixture(item, leagueName) {
   };
 }
 
+// Resolve a team's next HOME fixture (raw item) + its venue id/image by EXACT API-Football team id.
+// PRIMARY the venue filter, FALLBACK the team's next home game. All via apiGet, so it's edge/Supabase
+// cached and rate-limit-retried. Shared by mode=venue (teamId path) and the mode=nearby batch.
+async function venueNextByTeamId(teamId) {
+  const td = await apiGet("/teams?id=" + encodeURIComponent(teamId), 86400);
+  const e = td && td[0];
+  if (!e) return { venueId: null, image: null, item: null };
+  const tid = (e.team && e.team.id) || parseInt(teamId, 10) || null;
+  const vn = e.venue || {};
+  const venueId = vn.id || null;
+  let item = null;
+  if (venueId) {
+    const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
+    if (byVenue && byVenue.length) item = byVenue[0];
+  }
+  if (!item && tid) {
+    const fx = await apiGet("/fixtures?team=" + tid + "&next=10", 900);
+    const homeGames = (fx || []).filter(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(tid); });
+    const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
+    item = atVenue[0] || homeGames[0] || null;
+  }
+  return { venueId: venueId, image: vn.image || null, item: item };
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("mode") || "list";
@@ -780,6 +804,25 @@ export async function GET(request) {
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600",
       },
+    });
+  }
+
+  // ── Nearest attendable fixtures (native app: "Yakınındaki Maçlar") ──
+  // The app sends candidate team ids in DISTANCE ORDER (nearest first) and we walk them, resolving each
+  // ground's next home fixture, returning the first `limit` that HAVE one. Doing the fan-out HERE (not in
+  // the app) means ONE request → one edge-cached response, and no client-side burst that trips the
+  // api-sports rate limit — which is exactly what dropped nearby grounds and let farther ones show. The
+  // app maps team id → its own stadium record for the name/city/distance shown on each card.
+  if (mode === "nearby") {
+    const ids = (searchParams.get("teams") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 10);
+    const limit = Math.min(parseInt(searchParams.get("limit") || "3", 10) || 3, 5);
+    const items = [];
+    for (let i = 0; i < ids.length && items.length < limit; i++) {
+      const r = await venueNextByTeamId(ids[i]);
+      if (r.item) items.push({ teamId: ids[i], fixture: mapFixture(r.item, r.item.league && r.item.league.name) });
+    }
+    return Response.json({ items: items }, {
+      headers: { "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600" },
     });
   }
 
