@@ -821,8 +821,11 @@ export async function GET(request) {
       const r = await venueNextByTeamId(ids[i]);
       if (r.item) items.push({ teamId: ids[i], fixture: mapFixture(r.item, r.item.league && r.item.league.name) });
     }
+    // Only a FULL result earns the long cache. A short one may be a cold-cache blip (an underlying fixture
+    // call not warm yet), so cache it briefly — it re-heals within 30s instead of being stuck for 15m.
+    const full = items.length >= Math.min(limit, ids.length);
     return Response.json({ items: items }, {
-      headers: { "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600" },
+      headers: { "Cache-Control": full ? "public, s-maxage=900, stale-while-revalidate=3600" : "public, s-maxage=30" },
     });
   }
 
