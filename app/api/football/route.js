@@ -1321,6 +1321,15 @@ export async function GET(request) {
         away: item.teams.away.name,
         score: g.home + " - " + g.away,
         league: (item.league && item.league.name) || "",
+        // enough to open the past match's OWN detail from the app
+        id: item.fixture.id,
+        homeId: item.teams.home.id,
+        awayId: item.teams.away.id,
+        homeLogo: item.teams.home.logo,
+        awayLogo: item.teams.away.logo,
+        leagueId: item.league && item.league.id,
+        season: item.league && item.league.season,
+        status: "finished",
       });
     });
     list.sort(function (a, b) { return new Date(b.ts) - new Date(a.ts); });
