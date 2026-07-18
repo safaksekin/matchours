@@ -1525,6 +1525,9 @@ export async function GET(request) {
         const dribbles = st.dribbles || {};
         const fouls = st.fouls || {};
         const cards = st.cards || {};
+        const tackles = st.tackles || {};
+        const duels = st.duels || {};
+        const penalty = st.penalty || {};
         // API gives passes.accuracy as a percentage value; derive accurate count from total.
         const passPct = passes.accuracy != null ? parseInt(passes.accuracy, 10) : null;
         const passTotal = passes.total != null ? passes.total : null;
@@ -1553,6 +1556,24 @@ export async function GET(request) {
           foulsCommitted: fouls.committed || 0,
           yellow: cards.yellow || 0,
           red: cards.red || 0,
+          // Advanced per-player stats (Sofascore-style). API coverage varies by league, so these
+          // are null when absent and the client hides the row rather than showing a fake 0.
+          keyPasses: passes.key != null ? passes.key : null,
+          tackles: tackles.total != null ? tackles.total : null,
+          interceptions: tackles.interceptions != null ? tackles.interceptions : null,
+          blocks: tackles.blocks != null ? tackles.blocks : null,
+          duelsTotal: duels.total != null ? duels.total : null,
+          duelsWon: duels.won != null ? duels.won : null,
+          dribbledPast: dribbles.past != null ? dribbles.past : null, // times the player was dribbled past (defensive)
+          offsides: st.offsides != null ? st.offsides : null,
+          penScored: penalty.scored != null ? penalty.scored : null,
+          penMissed: penalty.missed != null ? penalty.missed : null,
+          penSaved: penalty.saved != null ? penalty.saved : null,
+          penWon: penalty.won != null ? penalty.won : null,
+          penCommitted: penalty.commited != null ? penalty.commited : null, // API-Football spells it "commited"
+          captain: !!games.captain,
+          substitute: !!games.substitute,
+          number: games.number != null ? games.number : null,
         };
       });
     }
