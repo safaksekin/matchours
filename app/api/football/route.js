@@ -1369,6 +1369,17 @@ export async function GET(request) {
     const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, T);
     const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, T);
     const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, T);
+    // Fixture head (live minute + running score + status) — cached at the same T, so a LIVE match's
+    // detail keeps ticking (30s) instead of relying on the 5-min list feed.
+    const fxData = await apiGet("/fixtures?id=" + fixtureId, T);
+    const fx = fxData && fxData[0];
+    const live = fx ? {
+      minute: (fx.fixture && fx.fixture.status && fx.fixture.status.elapsed != null) ? fx.fixture.status.elapsed : null,
+      extra: (fx.fixture && fx.fixture.status && fx.fixture.status.extra != null) ? fx.fixture.status.extra : null,
+      statusShort: fx.fixture && fx.fixture.status ? fx.fixture.status.short : null,
+      home: fx.goals ? fx.goals.home : null,
+      away: fx.goals ? fx.goals.away : null,
+    } : null;
     const hasMatchStats = !!(statsData && statsData.length);
     // injuries + season averages are only shown before kickoff -> skip them once the match has stats
     const injuryData = hasMatchStats ? null : await apiGet("/injuries?fixture=" + fixtureId, 300);
@@ -1597,6 +1608,7 @@ export async function GET(request) {
         injuries: injuries,
         season: { home: homeSeason, away: awaySeason },
         playerStats: { home: homePlayers, away: awayPlayers },
+        live: live,
       },
     });
   }
