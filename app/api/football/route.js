@@ -274,7 +274,8 @@ export async function GET(request) {
     try {
       // games endpoints accept ?date=; mma fights we just take upcoming list
       const url = cfg.host + cfg.path + (sport === "mma" ? "?season=" + today.getFullYear() : "?date=" + dToday);
-      const res = await fetch(url, { headers: hdr(), next: { revalidate: 300 } });
+      // 45s so LIVE minutes/scores in the list (and the app's live-header fallback) stay fresh
+      const res = await fetch(url, { headers: hdr(), next: { revalidate: 45 } });
       const j = await res.json();
       const resp = (j && j.response) ? j.response : [];
       const out = [];
