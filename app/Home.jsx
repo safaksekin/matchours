@@ -2598,7 +2598,22 @@ var LEAGUE_GLOW = {
   203: "#E2231A", 204: "#E2231A", 205: "#E2231A", 552: "#E2231A",   // Turkey all — red
 };
 
-// Pull a representative color out of a logo image (skips transparent/white/black pixels). Falls back to null.
+function rgbToHue(r, g, b) {
+  var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (d === 0) return 0;
+  var h;
+  if (mx === r) h = ((g - b) / d) % 6;
+  else if (mx === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+// Pull a representative color out of a logo image. Finds the DOMINANT hue rather than averaging
+// every qualifying pixel — a flat average blends a badge's outline/trim/anti-aliased edges into
+// whatever's actually there (a mostly-red crest with some gold and a dark outline can average out to
+// a muddy brown). Pixels are bucketed by hue and the most-populous bucket's own average wins, and
+// RULE: no low-chroma or low-brightness pixel (grey / brown / near-black mush) is ever a candidate,
+// no matter how common it is — only real, vivid colour can become a league/crest tint.
 function useImageColor(src) {
   var [color, setColor] = useState(null);
   useEffect(function(){
@@ -2612,16 +2627,20 @@ function useImageColor(src) {
         var c = document.createElement("canvas"); var w = c.width = 24, h = c.height = 24;
         var ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
         var d = ctx.getImageData(0, 0, w, h).data;
-        var r = 0, g = 0, b = 0, n = 0;
+        var buckets = []; for (var k = 0; k < 12; k++) buckets.push({ r: 0, g: 0, b: 0, n: 0 }); // 30° hue slices
         for (var i = 0; i < d.length; i += 4) {
           if (d[i+3] < 128) continue;
           var rr = d[i], gg = d[i+1], bb = d[i+2];
-          var mx = Math.max(rr, gg, bb), mn = Math.min(rr, gg, bb);
+          var mx = Math.max(rr, gg, bb), mn = Math.min(rr, gg, bb), chroma = mx - mn;
           if (mx > 235 && mn > 235) continue; // near-white
-          if (mx < 32) continue;              // near-black
-          r += rr; g += gg; b += bb; n++;
+          if (mx < 60) continue;              // near-black / muddy-dark
+          if (chroma < 45) continue;          // low-saturation — grey, brown, washed-out: never a candidate
+          var bi = Math.floor(rgbToHue(rr, gg, bb) / 30) % 12;
+          buckets[bi].r += rr; buckets[bi].g += gg; buckets[bi].b += bb; buckets[bi].n++;
         }
-        if (!cancelled && n > 0) setColor("rgb(" + Math.round(r/n) + "," + Math.round(g/n) + "," + Math.round(b/n) + ")");
+        var dominant = { n: 0 };
+        for (var bj = 0; bj < buckets.length; bj++) if (buckets[bj].n > dominant.n) dominant = buckets[bj];
+        if (!cancelled && dominant.n > 0) setColor("rgb(" + Math.round(dominant.r/dominant.n) + "," + Math.round(dominant.g/dominant.n) + "," + Math.round(dominant.b/dominant.n) + ")");
       } catch (e) {}
     };
     img.src = src;
