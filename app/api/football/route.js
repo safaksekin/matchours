@@ -218,9 +218,13 @@ function mapFixture(item, leagueName) {
   };
 }
 
-// Resolve a team's next HOME fixture (raw item) + its venue id/image by EXACT API-Football team id.
-// PRIMARY the venue filter, FALLBACK the team's next home game. All via apiGet, so it's edge/Supabase
-// cached and rate-limit-retried. Shared by mode=venue (teamId path) and the mode=nearby batch.
+// Resolve a team's CURRENT-OR-NEXT HOME fixture (raw item) + its venue id/image by EXACT API-Football
+// team id. A LIVE home fixture always wins (short TTL, re-checked often) so a match that's already kicked
+// off keeps being returned here instead of falling out of `next=1` (which only sees not-started fixtures)
+// and getting replaced by whatever's scheduled after it. Only once the live match actually finishes does
+// this fall through to the normal NS lookup. PRIMARY the venue filter, FALLBACK the team's next home game.
+// All via apiGet, so it's edge/Supabase cached and rate-limit-retried. Shared by mode=venue (teamId path)
+// and the mode=nearby batch.
 async function venueNextByTeamId(teamId) {
   const td = await apiGet("/teams?id=" + encodeURIComponent(teamId), 86400);
   const e = td && td[0];
@@ -229,7 +233,11 @@ async function venueNextByTeamId(teamId) {
   const vn = e.venue || {};
   const venueId = vn.id || null;
   let item = null;
-  if (venueId) {
+  if (tid) {
+    const live = await apiGet("/fixtures?team=" + tid + "&live=all", 20);
+    item = (live || []).find(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(tid); }) || null;
+  }
+  if (!item && venueId) {
     const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
     if (byVenue && byVenue.length) item = byVenue[0];
   }
@@ -824,9 +832,14 @@ export async function GET(request) {
     }
     // Only a FULL result earns the long cache. A short one may be a cold-cache blip (an underlying fixture
     // call not warm yet), so cache it briefly — it re-heals within 30s instead of being stuck for 15m.
+    // A LIVE item also gets a short cache — otherwise the 15m edge cache would freeze it at whatever
+    // minute/score it had when first fetched, and (worse) would delay noticing it finished, so the passport
+    // would keep pointing at a dead match instead of moving on to that venue's real next fixture.
     const full = items.length >= Math.min(limit, ids.length);
+    const hasLive = items.some(function (it) { return it.fixture && it.fixture.status === "live"; });
+    const maxAge = !full ? 30 : (hasLive ? 30 : 900);
     return Response.json({ items: items }, {
-      headers: { "Cache-Control": full ? "public, s-maxage=900, stale-while-revalidate=3600" : "public, s-maxage=30" },
+      headers: { "Cache-Control": "public, s-maxage=" + maxAge + ", stale-while-revalidate=3600" },
     });
   }
 
