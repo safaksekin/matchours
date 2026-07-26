@@ -9,7 +9,10 @@
     "lint": "eslint",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "search:seed": "node --env-file-if-exists=.env.seed scripts/seed-search.mjs",
+    "search:aliases": "node scripts/gen-aliases.mjs",
+    "search:test": "node scripts/test-search.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

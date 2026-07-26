@@ -158,6 +158,71 @@ async function apiGet(path, revalidate, _retried) {
   } catch (e) { return null; }
 }
 
+// ── Our own search index (Supabase) ────────────────────────────────────────
+// Typeahead is answered from `search_entities` / `search_all()`, NOT from
+// API-Football's `?search=`. That upstream parameter needs >= 3 characters,
+// compares raw diacritic-sensitive substrings ("eyup" never matches "Eyüpspor",
+// "yildiz" never matches "Kenan Yıldız") and has no ranking at all, so "mil"
+// answers Millwall before AC Milan. None of that is fixable from out here.
+// See supabase/migrate-search-index.sql + scripts/seed-search.mjs.
+async function searchIndex(q, perKind) {
+  if (!SB_ON) return null;
+  try {
+    const r = await fetch(SB_URL + "/rest/v1/rpc/search_all", {
+      method: "POST",
+      headers: sbHdr(),
+      body: JSON.stringify({ q: q, per_kind: perKind || 6 }),
+    });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    if (!Array.isArray(rows)) return null;
+    const out = { teams: [], players: [], venues: [], leagues: [] };
+    for (const row of rows) {
+      if (row.kind === "team") out.teams.push(row);
+      else if (row.kind === "player") out.players.push(row);
+      else if (row.kind === "venue") out.venues.push(row);
+      else out.leagues.push(row);
+    }
+    return out;
+  } catch (e) { return null; }
+}
+
+// Is the index populated? Answers whether we may rely on it, so a deploy that
+// lands BEFORE the seeder has run keeps working on the legacy API-Football path
+// instead of returning an empty search box. Cached, so it costs one query per
+// worker instance per 10 minutes — not one per search.
+let _indexReady = { at: 0, ok: false };
+async function indexReady() {
+  if (!SB_ON) return false;
+  if (Date.now() - _indexReady.at < 600000) return _indexReady.ok;
+  try {
+    const r = await fetch(SB_URL + "/rest/v1/search_entities?select=ext_id&kind=eq.team&limit=1", { headers: sbHdr() });
+    const rows = r.ok ? await r.json() : null;
+    _indexReady = { at: Date.now(), ok: !!(rows && rows.length) };
+  } catch (e) {
+    _indexReady = { at: Date.now(), ok: false };
+  }
+  return _indexReady.ok;
+}
+
+// index row -> the shapes both clients already render
+function idxTeam(r) {
+  return { id: r.ext_id, name: r.name, logo: r.image || null, country: r.country || r.subtitle || null };
+}
+function idxPlayer(r) {
+  const m = r.meta || {};
+  return {
+    id: r.ext_id,
+    name: r.name,
+    photo: r.image || null,
+    age: m.age != null ? m.age : null,
+    nationality: r.country || null,
+    position: m.position || null,
+    team: r.subtitle || null,   // the club — what actually tells two namesakes apart
+    teamId: m.teamId != null ? m.teamId : null,
+  };
+}
+
 // API-Football's search field rejects non-ASCII (Turkish ı/ü/ş... -> error), so fold first.
 function asciiFold(s) {
   if (!s) return "";
@@ -331,11 +396,136 @@ export async function GET(request) {
     }
   }
 
-  // ── Search: team fixtures + players by name ──
+  // ── Search: teams · players · matches ──
+  // Entities come from OUR index (one indexed Postgres query, no upstream call,
+  // works from a single character). Only the MATCH list still needs
+  // API-Football, and it is fetched by team id — never by text — so a fixture
+  // lookup can no longer be wrecked by how the provider spells a club.
   if (mode === "search") {
-    const qRaw = searchParams.get("q") || "";
+    const qRaw = (searchParams.get("q") || "").trim();
+    if (qRaw.length < 1) return Response.json({ teams: [], matches: [], players: [], venues: [] });
+
+    if (await indexReady()) {
+      const idx = await searchIndex(qRaw, 6);
+      if (idx) {
+        const teamsOut = idx.teams.map(idxTeam);
+        let playersOut = idx.players.map(idxPlayer);
+        const venuesOut = idx.venues.map(function (r) {
+          return { id: r.ext_id, name: r.name, city: (r.meta && r.meta.city) || null, image: r.image || null, country: r.country || null };
+        });
+
+        // The index is built from CURRENT squads, so it deliberately does not carry
+        // retired players — "zidane" and "pirlo" would return nothing, which the
+        // old text-proxy search did handle. Ask upstream for exactly that case and
+        // nothing else: only when the index found no player at all, only for a
+        // query long enough to be a real surname, and cached for a day. Teams,
+        // venues and leagues need no equivalent — those are indexed exhaustively.
+        if (!playersOut.length) {
+          const legacyQ = searchSafe(qRaw);
+          if (legacyQ.length >= 4) {
+            const profiles = await apiGet("/players/profiles?search=" + encodeURIComponent(legacyQ), 86400);
+            playersOut = (profiles || [])
+              .map(function (it) { return it.player || {}; })
+              .filter(function (p) { return p.id; })
+              .slice(0, 6)
+              .map(function (p) {
+                return {
+                  id: p.id,
+                  // prefer "Zinedine Zidane" over the abbreviated "Z. Zidane" the API returns in `name`
+                  name: (p.firstname && p.lastname && p.firstname.length > 2 && p.firstname.indexOf(".") === -1)
+                    ? (p.firstname + " " + p.lastname)
+                    : (p.name || ((p.firstname || "") + " " + (p.lastname || "")).trim()),
+                  photo: p.photo || null,
+                  age: p.age != null ? p.age : null,
+                  nationality: p.nationality || null,
+                  position: p.position || null,
+                  team: null,
+                  teamId: null,
+                };
+              });
+          }
+        }
+
+        // Head-to-head: "fenerbahce besiktas" should answer with the derby, not
+        // with whichever half the ranker happened to like. Only accepted when
+        // BOTH halves independently resolve to a well-known club, so ordinary
+        // two-word queries ("arda guler") are unaffected.
+        const toks = qRaw.split(/\s+/).filter(Boolean);
+        let pair = null;
+        if (toks.length >= 2 && toks.length <= 4) {
+          const splits = [];
+          for (let i = 1; i < toks.length; i++) splits.push([toks.slice(0, i).join(" "), toks.slice(i).join(" ")]);
+          const probed = await Promise.all(
+            splits.map(function (s) {
+              return Promise.all([searchIndex(s[0], 1), searchIndex(s[1], 1)]);
+            })
+          );
+          const solid = function (res) {
+            const t = res && res.teams && res.teams[0];
+            return t && t.score >= 150 && t.popularity >= 55 ? t : null;
+          };
+          for (const [ra, rb] of probed) {
+            const a = solid(ra), b = solid(rb);
+            if (a && b && a.ext_id !== b.ext_id) { pair = [a, b]; break; }
+          }
+        }
+
+        const matchesOut = [];
+        const seenFx = {};
+        const pushFx = function (item) {
+          if (!item || !item.fixture) return;
+          const fid = String(item.fixture.id);
+          if (seenFx[fid]) return;
+          seenFx[fid] = true;
+          matchesOut.push(mapFixture(item, item.league && item.league.name));
+        };
+
+        if (pair) {
+          const h2h = pair[0].ext_id + "-" + pair[1].ext_id;
+          const [nextH, lastH] = await Promise.all([
+            apiGet("/fixtures/headtohead?h2h=" + h2h + "&next=5", 120),
+            apiGet("/fixtures/headtohead?h2h=" + h2h + "&last=10", 300),
+          ]);
+          [].concat(nextH || [], lastH || []).forEach(pushFx);
+          // put the two protagonists first, keep the rest of the ranking behind them
+          const ids = [pair[0].ext_id, pair[1].ext_id];
+          teamsOut.sort(function (a, b) { return ids.indexOf(b.id) - ids.indexOf(a.id); });
+        } else if (teamsOut.length) {
+          const top = teamsOut[0].id;
+          const [up, re] = await Promise.all([
+            apiGet("/fixtures?team=" + top + "&next=6", 120),
+            apiGet("/fixtures?team=" + top + "&last=6", 300),
+          ]);
+          [].concat(up || [], re || []).forEach(pushFx);
+        } else if (playersOut.length && playersOut[0].teamId) {
+          // No team matched but a player did ("haaland") — show HIS club's fixtures,
+          // which is the match list the user actually wanted.
+          const [up, re] = await Promise.all([
+            apiGet("/fixtures?team=" + playersOut[0].teamId + "&next=4", 120),
+            apiGet("/fixtures?team=" + playersOut[0].teamId + "&last=4", 300),
+          ]);
+          [].concat(up || [], re || []).forEach(pushFx);
+        }
+
+        const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
+        matchesOut.sort(function (a, b) { return rank(a.status) - rank(b.status); });
+
+        return Response.json(
+          { teams: teamsOut, matches: matchesOut, players: playersOut, venues: venuesOut },
+          // Entity ranking only changes when the index is re-seeded, and the
+          // fixtures attached to it are already cached per team. Letting the edge
+          // hold the whole response means a popular prefix is served from the
+          // colo, so the common keystrokes cost nothing at all.
+          { headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=600" } }
+        );
+      }
+    }
+
+    // ── Legacy fallback ──────────────────────────────────────────────────────
+    // Reached only while the index is empty (fresh deploy, seeder not run yet)
+    // or if Supabase is unreachable. Delete once the index is seeded everywhere.
     const q = searchSafe(qRaw); // fold Turkish/accents; API needs ASCII
-    if (q.length < 2) return Response.json({ teams: [], matches: [], players: [] });
+    if (q.length < 2) return Response.json({ teams: [], matches: [], players: [], venues: [] });
 
     // Players: API stores abbreviated first names ("E. Haaland", "A. Güler"), so the profile
     // search matches the surname best. For multi-word input search by the last token (surname),
@@ -497,7 +687,7 @@ export async function GET(request) {
     const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
     matchesOut.sort(function (a, b) { return rank(a.status) - rank(b.status); });
 
-    return Response.json({ teams: teamsOut, matches: matchesOut, players: players });
+    return Response.json({ teams: teamsOut, matches: matchesOut, players: players, venues: [] });
   }
 
   // ── Player season stats + trophies (Sofascore-style profile page) ──

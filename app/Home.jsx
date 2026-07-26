@@ -4305,8 +4305,10 @@ function PlayerRow({ player, t, onOpen }) {
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ color: COLORS.textPrimary, fontSize: 14, fontWeight: 600,
         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{player.name}</div>
+      {/* Club first: with two players called Yıldız on screen, "Juventus" vs
+          "Kırklarelispor" is what tells them apart — position rarely does. */}
       <div style={{ color: COLORS.textMuted, fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {[player.position, player.nationality].filter(Boolean).join(" · ")}</div>
+        {[player.team ? locTeam(player.team, t) : null, player.position, player.nationality].filter(Boolean).join(" · ")}</div>
     </div>
     <FavButton kind="player" refId={player.id} name={player.name} image={player.photo}
       meta={{ position: player.position || null, nationality: player.nationality || null }} />
@@ -6456,18 +6458,26 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     return function(){ cancelled = true; };
   }, [loggedIn, activeSport]);
 
-  // debounced player search (API). Matches are filtered locally below.
+  // Debounced universal search. ONE character is enough now: /api/football?mode=search
+  // answers teams + players from our own prefix index instead of forwarding the text
+  // to API-Football (which needed 3+ chars and matched diacritics literally), so "e"
+  // already ranks Everton and "ey" finds Eyüpspor.
   useEffect(function(){
     var q = query.trim();
-    if (q.length < 2) { setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); return; }
+    if (q.length < 1) { setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); return; }
     setSearching(true);
+    var cancelled = false;
     var id = setTimeout(function(){
       fetch("/api/football?mode=search&q=" + encodeURIComponent(q))
         .then(function(r){ return r.json(); })
-        .then(function(j){ setPlayerResults(j.players || []); setMatchResults(j.matches || []); setTeamResults(j.teams || []); setSearching(false); })
-        .catch(function(){ setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); });
-    }, 350);
-    return function(){ clearTimeout(id); };
+        .then(function(j){ if (cancelled) return;
+          setPlayerResults(j.players || []); setMatchResults(j.matches || []); setTeamResults(j.teams || []); setSearching(false); })
+        .catch(function(){ if (cancelled) return;
+          setPlayerResults([]); setMatchResults([]); setTeamResults([]); setSearching(false); });
+    }, 220);
+    // A slow response for "ar" must not overwrite the results already rendered for
+    // "arda" — at a 220 ms debounce, requests do overlap.
+    return function(){ cancelled = true; clearTimeout(id); };
   }, [query]);
 
   // load the league tree for the active sport (cached per sport); reset any league selection
