@@ -734,32 +734,64 @@ export async function GET(request) {
 
     const p = entry.player || {};
     const stats = entry.statistics || [];
-    let apps = 0, goals = 0, assists = 0, minutes = 0, yellow = 0, red = 0;
+    let apps = 0, lineups = 0, goals = 0, assists = 0, minutes = 0, yellow = 0, red = 0;
     let ratingSum = 0, ratingW = 0;
+    // Raw per-action groups, summed across every competition. These feed the native app's radar
+    // chart; they used to be dropped here, which left the radar with nothing real to plot.
+    // Coverage is uneven — small cups return null for tackles/dribbles/pass accuracy where a big
+    // league fills them in — so `num()` treats null as 0 for the sums, and `accW` weights pass
+    // accuracy by the appearances that actually reported one instead of averaging the nulls in.
+    const num = function (v) { const n = typeof v === "number" ? v : parseFloat(v); return isNaN(n) ? 0 : n; };
+    const adv = {
+      shotsTotal: 0, shotsOn: 0,
+      passesTotal: 0, passesKey: 0, passAccuracy: null,
+      tackles: 0, blocks: 0, interceptions: 0,
+      duelsTotal: 0, duelsWon: 0,
+      dribbleAttempts: 0, dribbleSuccess: 0,
+      foulsDrawn: 0, foulsCommitted: 0,
+      penScored: 0, penMissed: 0, penWon: 0,
+    };
+    let accSum = 0, accW = 0;
     const competitions = [];
     stats.forEach(function (s) {
       const g = s.games || {};
       const go = s.goals || {};
       const cd = s.cards || {};
+      const sh = s.shots || {}, pa = s.passes || {}, tk = s.tackles || {};
+      const du = s.duels || {}, dr = s.dribbles || {}, fo = s.fouls || {}, pe = s.penalty || {};
       const a = g.appearences || 0; // API spells it "appearences"
       apps += a;
+      lineups += g.lineups || 0;
       goals += go.total || 0;
       assists += go.assists || 0;
       minutes += g.minutes || 0;
       yellow += cd.yellow || 0;
       red += (cd.red || 0) + (cd.yellowred || 0);
       if (g.rating != null) { const rv = parseFloat(g.rating); if (!isNaN(rv)) { ratingSum += rv * (a || 1); ratingW += (a || 1); } }
+      adv.shotsTotal += num(sh.total); adv.shotsOn += num(sh.on);
+      adv.passesTotal += num(pa.total); adv.passesKey += num(pa.key);
+      if (pa.accuracy != null) { accSum += num(pa.accuracy) * (a || 1); accW += (a || 1); }
+      adv.tackles += num(tk.total); adv.blocks += num(tk.blocks); adv.interceptions += num(tk.interceptions);
+      adv.duelsTotal += num(du.total); adv.duelsWon += num(du.won);
+      adv.dribbleAttempts += num(dr.attempts); adv.dribbleSuccess += num(dr.success);
+      adv.foulsDrawn += num(fo.drawn); adv.foulsCommitted += num(fo.committed);
+      adv.penScored += num(pe.scored); adv.penMissed += num(pe.missed); adv.penWon += num(pe.won);
       competitions.push({
         league: (s.league && s.league.name) || "",
+        leagueId: (s.league && s.league.id) || null,
         leagueLogo: (s.league && s.league.logo) || null,
+        leagueType: (s.league && s.league.type) || null,
         team: (s.team && s.team.name) || "",
         teamLogo: (s.team && s.team.logo) || null,
         appearances: a,
+        lineups: g.lineups || 0,
+        minutes: g.minutes || 0,
         goals: go.total || 0,
         assists: go.assists || 0,
         rating: g.rating != null ? Math.round(parseFloat(g.rating) * 100) / 100 : null,
       });
     });
+    if (accW > 0) adv.passAccuracy = Math.round(accSum / accW);
     const primary = stats[0] || {};
 
     return Response.json({
@@ -771,15 +803,18 @@ export async function GET(request) {
         nationality: p.nationality || null,
         height: p.height || null,
         weight: p.weight || null,
+        injured: !!p.injured,
+        birth: p.birth || null,
         position: (primary.games && primary.games.position) || p.position || null,
         team: { name: (primary.team && primary.team.name) || null, logo: (primary.team && primary.team.logo) || null },
         teamId: (primary.team && primary.team.id) || null,
         season: parseInt(season, 10),
         totals: {
-          appearances: apps, goals: goals, assists: assists, minutes: minutes,
+          appearances: apps, lineups: lineups, goals: goals, assists: assists, minutes: minutes,
           yellow: yellow, red: red,
           rating: ratingW > 0 ? Math.round(ratingSum / ratingW * 100) / 100 : null,
         },
+        adv: adv,
         competitions: competitions,
         trophies: trophies,
         trophiesWon: trophiesWon,
@@ -844,6 +879,10 @@ export async function GET(request) {
         score: (tg != null ? tg : "-") + "-" + (og != null ? og : "-"),
         result: (tg != null && og != null) ? (tg > og ? "W" : tg < og ? "L" : "D") : null,
         rating: rating != null ? Math.round(rating * 100) / 100 : null,
+        minutes: mins,
+        // the whole fixture in the same shape every other list uses, so tapping one of these rows can
+        // open the normal match detail instead of a stub built from the opponent name alone
+        match: mapFixture(f, f.league && f.league.name),
       });
     }
     return Response.json({ games: out });
