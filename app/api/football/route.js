@@ -245,9 +245,16 @@ function searchSafe(s) {
   return asciiFold(s).replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// Everything that is not clearly in play or clearly over used to collapse into "upcoming", which put
+// postponed and cancelled fixtures in the same bucket as tonight's kick-offs — and there they stayed
+// forever, since a postponed match never gets a score to move it on.
+//   PST postponed · CANC cancelled · ABD abandoned  -> it is not going to be played at this time
+//   AWD awarded  · WO walkover                      -> decided, just not on the pitch
+//   SUSP suspended                                  -> halted mid-match, may resume: still live
 function statusOf(short) {
-  if (["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"].includes(short)) return "live";
-  if (["FT", "AET", "PEN"].includes(short)) return "finished";
+  if (["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"].includes(short)) return "live";
+  if (["FT", "AET", "PEN", "AWD", "WO"].includes(short)) return "finished";
+  if (["PST", "CANC", "ABD"].includes(short)) return "postponed";
   return "upcoming";
 }
 
