@@ -264,6 +264,22 @@ function ymd(d) {
   return d.getFullYear() + "-" + m + "-" + day;
 }
 
+// Cache OUR OWN response at the edge, not just the api-sports calls behind it.
+//
+// apiGet() caches upstream; without this the Worker still woke up for every single request, re-mapped
+// the whole fixture set and re-serialised it — 600 KB of JSON built from scratch on a full cache hit.
+// With s-maxage, Cloudflare answers from the colo and the Worker is never invoked.
+// stale-while-revalidate lets it keep serving the old copy while it refreshes in the background, so
+// nobody ever waits for the refill. Private caches are excluded (s-maxage, not max-age): a shared
+// answer is fine in a datacentre, but a user's phone should keep using its own status-aware TTLs.
+function jsonCached(body, sMaxAge, swr) {
+  return Response.json(body, {
+    headers: {
+      "Cache-Control": "public, s-maxage=" + sMaxAge + ", stale-while-revalidate=" + (swr || sMaxAge * 4),
+    },
+  });
+}
+
 function mapFixture(item, leagueName) {
   const fx = item.fixture;
   const d = new Date(fx.date);
@@ -289,14 +305,15 @@ function mapFixture(item, leagueName) {
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
     penScore: (function(){ var p = item.score && item.score.penalty; return (p && p.home != null && p.away != null) ? (p.home + " - " + p.away) : null; })(),
+    // Only the three fields a fixture actually carries. The form/rank/squad/channel/h2h keys used to
+    // be emitted here as empty arrays and nulls — they are filled by mode=detail, never by a fixture
+    // list, so in a 864-match response they were ~250 KB of nothing repeated 864 times. The web
+    // already defaults every one of them (Home.jsx: `Object.assign({channels:[], homeSquad:[], ...},
+    // match.stats)`), so dropping them changes no behaviour, only the size.
     stats: {
       referee: fx.referee || "—",
       stadium: (fx.venue && fx.venue.name) || "—",
       city: (fx.venue && fx.venue.city) || "—",
-      homeForm: [], awayForm: [], homeRank: null, awayRank: null,
-      homePoints: null, awayPoints: null,
-      homeSquad: [], awaySquad: [], channels: [],
-      h2h: { total: 0, homeWins: 0, awayWins: 0, draws: 0 }, comments: [],
     },
   };
 }
@@ -1120,7 +1137,9 @@ export async function GET(request) {
       });
       const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
       out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
-      return Response.json({ matches: out });
+      // a past date can never change again; today and tomorrow still have games running
+      const settled = date < ymd(new Date());
+      return settled ? jsonCached({ matches: out }, 86400, 604800) : jsonCached({ matches: out }, 60, 300);
     }
 
     const HOSTS = { basketball: "https://v1.basketball.api-sports.io", volleyball: "https://v1.volleyball.api-sports.io" };
@@ -1868,7 +1887,10 @@ export async function GET(request) {
     const homePlayers = sidePlayers(homeTeamId, 0);
     const awayPlayers = sidePlayers(awayTeamId, 1);
 
-    return Response.json({
+    // Same TTL rule the upstream calls use (T above): a finished match is a historical record, a live
+    // one is worth 30 seconds. This is the heaviest response in the file — lineups, per-player stats,
+    // timeline — so serving it from the colo is where the biggest saving is.
+    return jsonCached({
       detail: {
         lineups: { home: homeLU, away: awayLU },
         stats: { home: homeStats, away: awayStats },
@@ -1880,7 +1902,7 @@ export async function GET(request) {
         playerStats: { home: homePlayers, away: awayPlayers },
         live: live,
       },
-    });
+    }, T, T * 4);
   }
 
   // ── List: everything that is live, or kicking off / played within the window ──
@@ -1932,5 +1954,7 @@ export async function GET(request) {
     return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
   });
 
-  return Response.json({ matches: all });
+  // 30s: the live half of this response is fetched on a 20s upstream cache, so a longer edge TTL
+  // would just hold yesterday's minute. The app layers its own 45s cache on top of this.
+  return jsonCached({ matches: all }, 30, 120);
 }

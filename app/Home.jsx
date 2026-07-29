@@ -1813,7 +1813,11 @@ function RatingConsensus({ match, t }) {
 
 function MatchDetail({ match, isF1, t, sharedDetail, sharedLoading, jumpComments }) {
   // match.stats may be a thin snapshot (opened from the community feed) — default the array fields so nothing crashes.
-  var s = Object.assign({ channels: [], homeSquad: [], awaySquad: [], homeForm: [], awayForm: [], h2h: [] }, match.stats || {});
+  // h2h defaults to an OBJECT, not []: the render guards on `h2h.total === 0`, and on an array that
+  // is `undefined === 0` — false — so the empty default fell straight through to the bar chart and
+  // divided by undefined. It only ever worked because the fixture payload happened to carry a zeroed
+  // h2h object; the list no longer ships one (it is filled by mode=h2h), so the default has to be right.
+  var s = Object.assign({ channels: [], homeSquad: [], awaySquad: [], homeForm: [], awayForm: [], h2h: { total: 0, homeWins: 0, awayWins: 0, draws: 0 } }, match.stats || {});
   var [tab, setTab] = useState((isF1 || match.status === "finished") ? "info" : "tahmin"); // upcoming/live football opens on the prediction tab
   useEffect(function(){ if (jumpComments) setTab("comments"); }, [jumpComments]);
   var [h2h, setH2h] = useState(s.h2h);
