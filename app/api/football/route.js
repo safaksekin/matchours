@@ -6,24 +6,35 @@ import { POP_TEAMS, POP_PLAYERS, popRank, popOf } from "../../lib/popular";
 
 const HOST = "https://v3.football.api-sports.io";
 
-// league id + season (season = starting year; 2025/26 -> 2025, World Cup 2026 -> 2026)
-const LEAGUES = [
-  { id: 1,   name: "World Cup",        season: 2026 },
-  { id: 2,   name: "Champions League", season: 2025 },
-  { id: 39,  name: "Premier League",   season: 2025 },
-  { id: 140, name: "La Liga",          season: 2025 },
-  { id: 135, name: "Serie A",          season: 2025 },
-  { id: 78,  name: "Bundesliga",       season: 2025 },
-  { id: 61,  name: "Ligue 1",          season: 2025 },
-  { id: 203, name: "Super Lig",        season: 2025 },
-  // in-season summer leagues (calendar-year -> 2026 season)
-  { id: 292, name: "K League 1",         season: 2026 }, // South Korea
-  { id: 169, name: "Çin Süper Lig",      season: 2026 }, // China
-  { id: 113, name: "Allsvenskan",        season: 2026 }, // Sweden
-  { id: 244, name: "Veikkausliiga",      season: 2026 }, // Finland
-  { id: 116, name: "Belarus Premier",    season: 2026 }, // Belarus
-  { id: 103, name: "Eliteserien",        season: 2026 }, // Norway
-];
+// Short display names for the leagues the UI is laid out around — nothing more.
+//
+// This used to be a WHITELIST with a pinned `season` per league, and both halves were bugs waiting
+// to fire. The whitelist hid every league it had never heard of, which for an app whose job is
+// checking people in at grounds is backwards: an amateur division is exactly the fixture that must
+// not be missing. And a pinned `season: 2025` does not fail loudly — it keeps answering 200 with
+// last season's finished fixtures and no upcoming ones, so the feed quietly empties the day that
+// season ends. In July 2026 every European league here was still being asked for 2025/26.
+//
+// Both are gone: fixtures are fetched BY DATE (a date needs no season and belongs to no whitelist)
+// and this map only overrides the name where we prefer a shorter one.
+const LEAGUE_NAMES = {
+  1: "World Cup",
+  2: "Champions League",
+  3: "Europa League",
+  848: "Conference League",
+  39: "Premier League",
+  140: "La Liga",
+  135: "Serie A",
+  78: "Bundesliga",
+  61: "Ligue 1",
+  203: "Super Lig",
+  292: "K League 1",
+  169: "Çin Süper Lig",
+  113: "Allsvenskan",
+  244: "Veikkausliiga",
+  116: "Belarus Premier",
+  103: "Eliteserien",
+};
 
 function hdr() { return { "x-apisports-key": process.env.APISPORTS_KEY || "" }; }
 
@@ -1091,13 +1102,14 @@ export async function GET(request) {
 
     if (sport === "football" || sport === "live") {
       const data = await apiGet("/fixtures?date=" + date, 120);
-      const nameById = {};
-      LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
-      const out = [];
-      (data || []).forEach(function (item) {
+      const nameById = LEAGUE_NAMES;
+      // EVERY league on that date, not just the curated ones. The app exists to check people in at
+      // grounds, including amateur and lower-division ones, so a fixture the whitelist had never
+      // heard of is precisely the one it must not drop. The curated name still wins where we have
+      // one — those are the short forms the UI is laid out for.
+      const out = (data || []).map(function (item) {
         const lid = item.league && item.league.id;
-        if (!nameById[lid]) return; // only our tracked leagues
-        out.push(mapFixture(item, nameById[lid]));
+        return mapFixture(item, nameById[lid] || null);
       });
       const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
       out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
@@ -1137,8 +1149,7 @@ export async function GET(request) {
     const sport = searchParams.get("sport") || "football";
     if (sport !== "football" && sport !== "live") return Response.json({ players: [], date: null });
     const start = searchParams.get("date") || ymd(new Date());
-    const nameById = {};
-    LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
+    const nameById = LEAGUE_NAMES;
     // walk back up to a week to find the latest day with finished fixtures in our leagues
     let chosen = null, fixtures = [];
     for (let back = 0; back < 2 && !chosen; back++) {
@@ -1865,49 +1876,53 @@ export async function GET(request) {
     });
   }
 
-  // ── List: live + upcoming + recent finished ──
-  const today = new Date();
-  const from = new Date(today); from.setDate(today.getDate() - 1);
-  const to = new Date(today); to.setDate(today.getDate() + 30);
-  const dFrom = from.toISOString().split("T")[0];
-  const dTo = to.toISOString().split("T")[0];
+  // ── List: everything that is live, or kicking off / played within the window ──
+  //
+  // Fetched BY DATE, not league by league. Three things fall out of that, all of them the point:
+  //   · no season parameter, so it cannot rot the way the pinned `season: 2025` did — a date is a
+  //     date, and the API resolves whichever season it belongs to;
+  //   · no whitelist, so amateur and lower divisions come through. Checking in at a ground is the
+  //     product; a league we never thought to list is exactly the one that must not be missing;
+  //   · a handful of parallel calls instead of one sequential call per tracked league.
+  const LIST_DAYS_AHEAD = 2;  // today + 2 — matches the window the app bands by day
+  const LIST_DAYS_BACK = 1;   // yesterday, so last night's results are still in the feed
+  const dayKeys = [];
+  for (let i = -LIST_DAYS_BACK; i <= LIST_DAYS_AHEAD; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    dayKeys.push({ key: d.toISOString().split("T")[0], today: i === 0 });
+  }
+
+  const nameById = LEAGUE_NAMES;
 
   const all = [];
   const seen = {};
-  function add(item, leagueName) {
+  function add(item) {
     var id = String(item.fixture.id);
     if (seen[id]) return;
     seen[id] = true;
-    all.push(mapFixture(item, leagueName));
+    var lid = item.league && item.league.id;
+    all.push(mapFixture(item, nameById[lid] || null));
   }
 
-  // 1) live matches across our leagues (fresh, short cache)
-  const leagueIds = LEAGUES.map(function (l) { return l.id; }).join("-");
-  const liveData = await apiGet("/fixtures?live=" + leagueIds, 20);
-  const nameById = {};
-  LEAGUES.forEach(function (l) { nameById[l.id] = l.name; });
-  if (liveData && liveData.length) {
-    liveData.forEach(function (item) {
-      var lid = item.league && item.league.id;
-      add(item, nameById[lid] || (item.league && item.league.name));
-    });
-  }
+  // Live first and on its own short cache: a day's fixtures can sit on a 15-minute cache, but a
+  // score and a minute cannot.
+  const liveData = await apiGet("/fixtures?live=all", 20);
+  (liveData || []).forEach(add);
 
-  // 2) upcoming + recent per league
-  for (const lg of LEAGUES) {
-    const data = await apiGet(
-      "/fixtures?league=" + lg.id + "&season=" + lg.season + "&from=" + dFrom + "&to=" + dTo,
-      300
-    );
-    if (data && data.length) {
-      data.slice(0, 20).forEach(function (item) { add(item, lg.name); });
-    }
-  }
+  // Today still has games in flight (short TTL); the other days are settled or not yet played.
+  const days = await Promise.all(dayKeys.map(function (d) {
+    return apiGet("/fixtures?date=" + d.key, d.today ? 120 : 900).catch(function () { return []; });
+  }));
+  days.forEach(function (list) { (list || []).forEach(add); });
 
+  // live → upcoming (soonest first) → finished (newest first). The native app re-sorts with league
+  // precedence on top of this; the web reads the order as-is.
   function rank(s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); }
   all.sort(function (a, b) {
-    var r = rank(a.status) - rank(b.status);
-    return r;
+    var ra = rank(a.status), rb = rank(b.status);
+    if (ra !== rb) return ra - rb;
+    return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
   });
 
   return Response.json({ matches: all });
