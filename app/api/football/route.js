@@ -350,7 +350,30 @@ async function venueNextByTeamId(teamId) {
   return { venueId: venueId, image: vn.image || null, item: item };
 }
 
+// A Worker's own response is NOT cached by the CDN just because it carries Cache-Control. The edge
+// cache sits in FRONT of the Worker and, for a dynamic route, is never consulted — the header alone
+// only ever talked to intermediaries that aren't there. So the Worker has to do the storing itself,
+// with the same Cache API apiGet() already uses for upstream calls.
+//
+// Only responses that asked to be shared (jsonCached sets s-maxage) are stored; the TTL in the header
+// is what Cloudflare then honours, so each mode keeps the lifetime it declared.
 export async function GET(request) {
+  const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
+  if (!edge) return handle(request);
+  const key = new Request(request.url, { method: "GET" });
+  try {
+    const hit = await edge.match(key);
+    if (hit) return hit;
+  } catch (e) { /* a cache read must never take the request down with it */ }
+  const res = await handle(request);
+  const cc = res.headers.get("Cache-Control") || "";
+  if (res.status === 200 && cc.indexOf("s-maxage") >= 0) {
+    try { await edge.put(key, res.clone()); } catch (e) {}
+  }
+  return res;
+}
+
+async function handle(request) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("mode") || "list";
 
