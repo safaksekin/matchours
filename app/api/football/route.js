@@ -2052,32 +2052,36 @@ async function handle(request) {
   // The -1..+2 window is NOT widened to go looking for them. When the curated leagues have nothing in
   // it, the cap is simply filled from everyone else — a short feed of what is actually being played
   // beats a long one padded with fixtures a fortnight out.
-  // A LIVE match is never a candidate for the cut. The cap is a curation rule for a fixture list, and
-  // a game being played is not a fixture — it is the one thing the user may already have open, may
-  // have checked in to, and watched move out of the upcoming tab an hour ago. Dropping it because a
-  // busy Saturday filled the quota with kick-offs is the list contradicting itself: the match is gone
-  // from upcoming (it started) and missing from live (it was trimmed).
+  // The cap counts FIXTURES. A match being played is spent past the point where curating it means
+  // anything — the user may have it open, may have checked in to it, watched it leave the upcoming
+  // tab an hour ago — so it is settled separately and does not eat a slot. Otherwise a busy Saturday
+  // of kick-offs makes the list contradict itself: the match is gone from upcoming because it
+  // started, and missing from live because the quota ran out.
   //
-  // It matters most exactly when it is hardest to notice. Today the priority pool is five fixtures,
-  // so everything fits and nothing is lost; on a full European weekend that pool clears 100 on its
-  // own, `top.slice(0, trim)` would be all upcoming, and every live game outside the curated leagues
-  // would vanish. So live comes out first and the cap is spent on what is left — which also means a
-  // response may exceed `limit` when more than that many games are in play. That is deliberate.
+  // Exempt is not the same as automatic, though. What earns a live match its place is that this list
+  // was ALREADY CARRYING IT as a fixture — not the mere fact that it is in play. So membership is
+  // decided by the same rule as everything else, and only then lifted out of the count: the curated
+  // leagues are a floor and are always in, while a live game outside them qualifies only when the
+  // curated fixtures do not fill the list on their own — because that is exactly the case where it
+  // would have held a slot an hour ago, when it was still the soonest kick-off in that half. Where
+  // there is no room for it now there was none for it then, and it was never on the list to fall off.
   const trim = clampInt(searchParams.get("limit"), 0, 500);
   if (trim && searchParams.get("tier") === "priority") {
+    const byWhen = function (list) {
+      return list.slice().sort(function (a, b) {
+        var ra = rank(a.status), rb = rank(b.status);
+        if (ra !== rb) return ra - rb;
+        return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
+      });
+    };
     const inPlay = feed.filter(function (m) { return m.status === "live"; });
     const later = feed.filter(function (m) { return m.status !== "live"; });
-    const room = Math.max(0, trim - inPlay.length);
-    const top = later.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null; });
-    const rest = later.filter(function (m) { return PRIORITY_RANK[m.leagueId] == null; });
-    // `feed` keeps its status/chronology order — the halves were filtered out of it, so concatenating
-    // them back only needs the boundaries re-sorted, which the same comparator handles.
-    const picked = inPlay.concat(top.length >= room ? top.slice(0, room) : top.concat(rest.slice(0, room - top.length)));
-    picked.sort(function (a, b) {
-      var ra = rank(a.status), rb = rank(b.status);
-      if (ra !== rb) return ra - rb;
-      return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
-    });
+    const top = byWhen(later.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null; }));
+    const rest = byWhen(later.filter(function (m) { return PRIORITY_RANK[m.leagueId] == null; }));
+    const roomBeyondCurated = top.length < trim;
+    const live = inPlay.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null || roomBeyondCurated; });
+    const fixtures = top.length >= trim ? top.slice(0, trim) : top.concat(rest.slice(0, trim - top.length));
+    const picked = byWhen(live.concat(fixtures));
     return jsonCached({ matches: picked }, 30, 120);
   }
 
