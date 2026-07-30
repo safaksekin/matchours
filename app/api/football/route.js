@@ -2052,13 +2052,27 @@ async function handle(request) {
   // The -1..+2 window is NOT widened to go looking for them. When the curated leagues have nothing in
   // it, the cap is simply filled from everyone else — a short feed of what is actually being played
   // beats a long one padded with fixtures a fortnight out.
+  // A LIVE match is never a candidate for the cut. The cap is a curation rule for a fixture list, and
+  // a game being played is not a fixture — it is the one thing the user may already have open, may
+  // have checked in to, and watched move out of the upcoming tab an hour ago. Dropping it because a
+  // busy Saturday filled the quota with kick-offs is the list contradicting itself: the match is gone
+  // from upcoming (it started) and missing from live (it was trimmed).
+  //
+  // It matters most exactly when it is hardest to notice. Today the priority pool is five fixtures,
+  // so everything fits and nothing is lost; on a full European weekend that pool clears 100 on its
+  // own, `top.slice(0, trim)` would be all upcoming, and every live game outside the curated leagues
+  // would vanish. So live comes out first and the cap is spent on what is left — which also means a
+  // response may exceed `limit` when more than that many games are in play. That is deliberate.
   const trim = clampInt(searchParams.get("limit"), 0, 500);
   if (trim && searchParams.get("tier") === "priority") {
-    const top = feed.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null; });
-    const rest = feed.filter(function (m) { return PRIORITY_RANK[m.leagueId] == null; });
-    // `feed` keeps its status/chronology order — both halves were filtered out of it, so concatenating
-    // them back only needs the boundary re-sorted, which the same comparator handles.
-    const picked = top.length >= trim ? top.slice(0, trim) : top.concat(rest.slice(0, trim - top.length));
+    const inPlay = feed.filter(function (m) { return m.status === "live"; });
+    const later = feed.filter(function (m) { return m.status !== "live"; });
+    const room = Math.max(0, trim - inPlay.length);
+    const top = later.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null; });
+    const rest = later.filter(function (m) { return PRIORITY_RANK[m.leagueId] == null; });
+    // `feed` keeps its status/chronology order — the halves were filtered out of it, so concatenating
+    // them back only needs the boundaries re-sorted, which the same comparator handles.
+    const picked = inPlay.concat(top.length >= room ? top.slice(0, room) : top.concat(rest.slice(0, room - top.length)));
     picked.sort(function (a, b) {
       var ra = rank(a.status), rb = rank(b.status);
       if (ra !== rb) return ra - rb;
