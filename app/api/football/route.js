@@ -38,6 +38,37 @@ const LEAGUE_NAMES = {
 
 function hdr() { return { "x-apisports-key": process.env.APISPORTS_KEY || "" }; }
 
+function clampInt(v, lo, hi) {
+  const n = parseInt(v || "", 10);
+  if (isNaN(n)) return 0;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+// The leagues a trimmed feed is REQUIRED to carry (`mode=list&tier=priority`), in the user's own
+// order. Deliberately a duplicate of LEAGUE_PRIORITY in the app's lib/football.js: the app applies
+// the same rule to whatever it receives, so it still behaves correctly against an older deploy of
+// this route — but the two lists must be edited together or the trim here will hide fixtures the app
+// would have ranked to the top. Not the same thing as LEAGUE_NAMES (display) or LEAGUE_TIER (depth).
+const PRIORITY_LEAGUES = [
+  2,   // UEFA Champions League
+  3,   // UEFA Europa League
+  848, // UEFA Europa Conference League
+  39,  // Premier League
+  78,  // Bundesliga
+  140, // La Liga
+  135, // Serie A
+  61,  // Ligue 1
+  203, // Süper Lig
+  88,  // Eredivisie
+  144, // Jupiler Pro League
+  40,  // Championship
+  79,  // 2. Bundesliga
+  204, // TFF 1. Lig
+  205, // TFF 2. Lig
+];
+const PRIORITY_RANK = {};
+PRIORITY_LEAGUES.forEach(function (id, i) { PRIORITY_RANK[id] = i; });
+
 // Curated tier order (lower = higher division) so league trees read top-down by level,
 // e.g. England: Premier League -> Championship -> League One; Turkey: Super Lig -> 1. Lig.
 const LEAGUE_TIER = {
@@ -270,14 +301,26 @@ function ymd(d) {
 // the whole fixture set and re-serialised it — 600 KB of JSON built from scratch on a full cache hit.
 // With s-maxage, Cloudflare answers from the colo and the Worker is never invoked.
 // stale-while-revalidate lets it keep serving the old copy while it refreshes in the background, so
-// nobody ever waits for the refill. Private caches are excluded (s-maxage, not max-age): a shared
-// answer is fine in a datacentre, but a user's phone should keep using its own status-aware TTLs.
+// nobody ever waits for the refill. Private caches are excluded: a shared answer is fine in a
+// datacentre, but a user's phone should keep using its own status-aware TTLs.
+//
+// `max-age=0` is now stated OUTRIGHT rather than left unset. Omitting it does not mean "no private
+// caching" — it means Cloudflare fills the gap with its Browser Cache TTL, and the zone's is four
+// hours, so this route was answering `public, max-age=14400, s-maxage=30`. iOS NSURLCache honours
+// max-age, so the app's 60-second poll of the live feed could legitimately be served a four-hour-old
+// score by the phone itself, without a request ever leaving the device.
 function jsonCached(body, sMaxAge, swr) {
   return Response.json(body, {
     headers: {
-      "Cache-Control": "public, s-maxage=" + sMaxAge + ", stale-while-revalidate=" + (swr || sMaxAge * 4),
+      "Cache-Control": "public, max-age=0, must-revalidate, s-maxage=" + sMaxAge + ", stale-while-revalidate=" + (swr || sMaxAge * 4),
     },
   });
+}
+
+// A response nobody may keep. For upstream failures: an error cached is an error that outlives its
+// cause, and the long-TTL branches below (a settled date caches for a day) would do exactly that.
+function jsonNoStore(body, status) {
+  return Response.json(body, { status: status || 200, headers: { "Cache-Control": "no-store" } });
 }
 
 function mapFixture(item, leagueName) {
@@ -1149,6 +1192,14 @@ async function handle(request) {
 
     if (sport === "football" || sport === "live") {
       const data = await apiGet("/fixtures?date=" + date, 120);
+      // apiGet returns null when the upstream call failed (rate limit, 5xx, unparseable body) — and
+      // `(data || [])` used to flatten that into the same empty list a genuinely quiet day produces.
+      // For a PAST date the branch below then cached it for a day with a week of stale-while-
+      // revalidate, so ONE rate-limited request blanked that date for everybody until the TTL ran
+      // out. Measured 2026-07-30: 07-27, 07-28 and 07-30 were all serving a cached `{"matches":[]}`
+      // while the origin had 100+ finished fixtures for each — the app's "Biten Maçlar" tab could
+      // only ever show one of the three days it asks for. A failure is now a failure: 502, no-store.
+      if (!data) return jsonNoStore({ matches: [], error: "upstream" }, 502);
       const nameById = LEAGUE_NAMES;
       // EVERY league on that date, not just the curated ones. The app exists to check people in at
       // grounds, including amateur and lower-division ones, so a fixture the whitelist had never
@@ -1160,8 +1211,10 @@ async function handle(request) {
       });
       const rank = function (s) { return s === "live" ? 0 : (s === "upcoming" ? 1 : 2); };
       out.sort(function (a, b) { return rank(a.status) - rank(b.status); });
-      // a past date can never change again; today and tomorrow still have games running
-      const settled = date < ymd(new Date());
+      // a past date can never change again; today and tomorrow still have games running.
+      // An EMPTY past date is the exception — a day with no football at all is close to impossible,
+      // so it reads as a coverage gap rather than a settled fact and gets the short TTL, not a day's.
+      const settled = date < ymd(new Date()) && out.length > 0;
       return settled ? jsonCached({ matches: out }, 86400, 604800) : jsonCached({ matches: out }, 60, 300);
     }
 
@@ -1977,7 +2030,44 @@ async function handle(request) {
     return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
   });
 
+  // `exclude=finished`: this feed drives the app's live + upcoming tabs only — its "Biten Maçlar" tab
+  // is fed by mode=bydate, which reaches further back than this window does anyway. Yesterday's
+  // results were a third of the fixtures here and not one of them was ever rendered from this call;
+  // worse, once the response is capped they were taking cap slots away from fixtures that ARE shown.
+  const dropped = (searchParams.get("exclude") || "").split(",");
+  const feed = dropped.indexOf("finished") >= 0
+    ? all.filter(function (m) { return m.status !== "finished"; })
+    : all;
+
+  // Optional trim, for clients that want the curated leagues rather than the whole world (the app
+  // asks for `tier=priority&limit=100`; the web sends neither and gets the full feed as before).
+  //
+  // Priority-FIRST, not priority-sorted. Sorting by league and then cutting would still be a cut by
+  // KICK-OFF TIME, and on 2026-07-30 the first 400 fixtures by kick-off were 385 friendlies, U20 and
+  // Regionalliga games with not a single curated one among them: late July is precisely when the big
+  // leagues are not playing, so the nearest fixtures are all somebody else's. Taking the priority
+  // leagues whole and topping the rest up to the cap is what puts a Champions League qualifier on the
+  // screen in a week when the only thing kicking off tonight is a third-tier friendly.
+  //
+  // The -1..+2 window is NOT widened to go looking for them. When the curated leagues have nothing in
+  // it, the cap is simply filled from everyone else — a short feed of what is actually being played
+  // beats a long one padded with fixtures a fortnight out.
+  const trim = clampInt(searchParams.get("limit"), 0, 500);
+  if (trim && searchParams.get("tier") === "priority") {
+    const top = feed.filter(function (m) { return PRIORITY_RANK[m.leagueId] != null; });
+    const rest = feed.filter(function (m) { return PRIORITY_RANK[m.leagueId] == null; });
+    // `feed` keeps its status/chronology order — both halves were filtered out of it, so concatenating
+    // them back only needs the boundary re-sorted, which the same comparator handles.
+    const picked = top.length >= trim ? top.slice(0, trim) : top.concat(rest.slice(0, trim - top.length));
+    picked.sort(function (a, b) {
+      var ra = rank(a.status), rb = rank(b.status);
+      if (ra !== rb) return ra - rb;
+      return ra === 2 ? ((b.ts || 0) - (a.ts || 0)) : ((a.ts || 0) - (b.ts || 0));
+    });
+    return jsonCached({ matches: picked }, 30, 120);
+  }
+
   // 30s: the live half of this response is fetched on a 20s upstream cache, so a longer edge TTL
   // would just hold yesterday's minute. The app layers its own 45s cache on top of this.
-  return jsonCached({ matches: all }, 30, 120);
+  return jsonCached({ matches: feed }, 30, 120);
 }
