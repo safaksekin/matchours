@@ -5443,7 +5443,9 @@ function ProfilePage({ onBack, onLogout, session, t, lang, setLang, onOpenTeam, 
   var [savingName, setSavingName] = useState(false);
   function onPickAvatar(e){
     var f = e.target.files && e.target.files[0]; if (!f) return; setAvaBusy(true);
-    cropSquareBlob(f, 400, 0.82).then(function(blob){ return uploadAvatar(blob); })
+    // 512, matching the native app's own avatar pipeline, so both clients put the same artifact in
+    // the bucket (see the sq512- contract in db.js uploadAvatar).
+    cropSquareBlob(f, 512, 0.8).then(function(blob){ return uploadAvatar(blob); })
       .then(function(res){ setAvaBusy(false); if (res && res.url) { PROFILE_CACHE.avatar = res.url; setAvatar(res.url); } })
       .catch(function(){ setAvaBusy(false); });
   }

@@ -98,11 +98,21 @@ export async function fetchUserAvatar(userId) {
   return data ? data.avatar_url : null;
 }
 // Upload a (already downscaled + 1:1-cropped) JPEG blob and persist its URL on the profile.
+//
+// `cacheControl` is the important argument here. Without it Storage stamps the object `no-cache`,
+// so every client re-downloads the avatar on EVERY render — which is what made profile pictures in
+// the native app reload from scratch each time a profile was opened. A year is safe on this path
+// because the filename carries Date.now(): a new photo is a new URL, so nothing needs invalidating.
+//
+// The `sq512-` prefix is a shared contract with the native app (AVATAR_OK_MARK in fikstür-app's
+// lib/db.js): it marks a file as having gone through the downscale + long-cache path. The app
+// re-processes any avatar WITHOUT that marker once, to drag pre-fix uploads onto the same footing —
+// so writing it here is what stops web-uploaded avatars from being needlessly rewritten.
 export async function uploadAvatar(blob) {
   const uid = await getUserId();
   if (!uid) return { error: "not_logged_in" };
-  const path = uid + "/avatar-" + Date.now() + ".jpg";
-  const up = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+  const path = uid + "/sq512-" + Date.now() + ".jpg";
+  const up = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg", cacheControl: "31536000" });
   if (up.error) return { error: up.error };
   const { data } = supabase.storage.from("avatars").getPublicUrl(path);
   const url = (data && data.publicUrl) || null;
@@ -440,11 +450,13 @@ export async function joinPredLeague(code) {
   const uid = await getUserId();
   if (!uid) return { error: "not_logged_in" };
   const clean = String(code || "").trim().toUpperCase();
-  const { data: lg } = await supabase.from("pred_leagues").select("*").eq("code", clean).maybeSingle();
+  // join_pred_league (security definer) checks the code server-side and adds the membership —
+  // league codes are no longer select-all readable, so the old client-side lookup can't work.
+  const { data, error } = await supabase.rpc("join_pred_league", { p_code: clean });
+  const lg = Array.isArray(data) ? data[0] : data;
+  if (error) return { error: error };
   if (!lg) return { error: "not_found" };
-  const { error } = await supabase.from("pred_league_members")
-    .upsert({ league_id: lg.id, user_id: uid }, { onConflict: "league_id,user_id" });
-  return { data: lg, error: error || null };
+  return { data: lg, error: null };
 }
 export async function fetchMyPredLeagues() {
   const uid = await getUserId();
@@ -544,7 +556,10 @@ export async function uploadLogPhoto(matchId, file) {
   if (!uid) return { error: "not_logged_in" };
   const ext = ((file && file.name && file.name.split(".").pop()) || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
   const path = uid + "/" + String(matchId) + "-" + Date.now() + "." + ext;
-  const up = await supabase.storage.from("log-photos").upload(path, file, { upsert: true, contentType: (file && file.type) || "image/jpeg" });
+  // Timestamped path → immutable URL, so the same year-long cache that avatars get applies. (This
+  // file is still uploaded at whatever size the phone produced; downscaling it the way the avatar
+  // path does is worth a follow-up — a 4 MB original is served in full to every viewer.)
+  const up = await supabase.storage.from("log-photos").upload(path, file, { upsert: true, contentType: (file && file.type) || "image/jpeg", cacheControl: "31536000" });
   if (up.error) return { error: up.error };
   const { data } = supabase.storage.from("log-photos").getPublicUrl(path);
   return { url: (data && data.publicUrl) || null };
