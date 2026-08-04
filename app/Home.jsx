@@ -502,7 +502,7 @@ const I18N = {
     team: "Takım", played: "O", gd: "AV",
     summary: "Özet", noEvents: "Olay bulunamadı.", penalty: "Penaltı", ownGoal: "Kendi kalesine", injuries: "Sakat / Cezalı", injured: "Sakat", suspended: "Cezalı", seasonAvgNote: "Sezon ortalamaları", matchesPlayed: "Oynanan", gfAvg: "Gol Ort.", gaAvg: "Yenilen Ort.", cleanSheets: "Gol Yemeden", wins: "Galibiyet", loses: "Mağlubiyet",
     viewDetails: "Detaylar",
-    settings: "Ayarlar", news: "Haberler", language: "Dil", moreSoon: "Daha fazla ayar yakında.", newsSoon: "Haberler yakında eklenecek.", topScorers: "Gol Kralları", topAssists: "Asist Kralları",
+    settings: "Ayarlar", language: "Dil", moreSoon: "Daha fazla ayar yakında.", topScorers: "Gol Kralları", topAssists: "Asist Kralları",
     appearance: "Görünüm", darkMode: "Koyu Mod",
     sports: { live: "Canlı", football: "Futbol", basketball: "Basketbol", motorsport: "Formula 1", tennis: "Tenis", volleyball: "Voleybol", esports: "Espor", mma: "MMA" } },
   en: { _lang: "en", tagline: "All sports stats, on one screen.", email: "Email", password: "Password",
@@ -540,7 +540,7 @@ const I18N = {
     team: "Team", played: "P", gd: "GD",
     summary: "Summary", noEvents: "No events.", penalty: "Penalty", ownGoal: "Own goal", injuries: "Injuries / Suspended", injured: "Injured", suspended: "Suspended", seasonAvgNote: "Season averages", matchesPlayed: "Played", gfAvg: "Goals For Avg", gaAvg: "Goals Against Avg", cleanSheets: "Clean Sheets", wins: "Wins", loses: "Losses",
     viewDetails: "Details",
-    settings: "Settings", news: "News", language: "Language", moreSoon: "More settings soon.", newsSoon: "News coming soon.", topScorers: "Top Scorers", topAssists: "Top Assists",
+    settings: "Settings", language: "Language", moreSoon: "More settings soon.", topScorers: "Top Scorers", topAssists: "Top Assists",
     appearance: "Appearance", darkMode: "Dark Mode",
     sports: { live: "Live", football: "Football", basketball: "Basketball", motorsport: "Formula 1", tennis: "Tennis", volleyball: "Volleyball", esports: "Esports", mma: "MMA" } },
   de: { _lang: "de", tagline: "Alle Sportstatistiken auf einem Bildschirm.", email: "E-Mail", password: "Passwort",
@@ -578,7 +578,7 @@ const I18N = {
     team: "Team", played: "Sp", gd: "TD",
     summary: "Zusammenfassung", noEvents: "Keine Ereignisse.", penalty: "Elfmeter", ownGoal: "Eigentor", injuries: "Verletzt / Gesperrt", injured: "Verletzt", suspended: "Gesperrt", seasonAvgNote: "Saisondurchschnitt", matchesPlayed: "Spiele", gfAvg: "Tore Schnitt", gaAvg: "Gegentore Schnitt", cleanSheets: "Zu Null", wins: "Siege", loses: "Niederlagen",
     viewDetails: "Details",
-    settings: "Einstellungen", news: "Nachrichten", language: "Sprache", moreSoon: "Mehr bald.", newsSoon: "Nachrichten bald.", topScorers: "Torjager", topAssists: "Vorlagengeber",
+    settings: "Einstellungen", language: "Sprache", moreSoon: "Mehr bald.", topScorers: "Torjager", topAssists: "Vorlagengeber",
     appearance: "Darstellung", darkMode: "Dunkler Modus",
     sports: { live: "Live", football: "Fussball", basketball: "Basketball", motorsport: "Formel 1", tennis: "Tennis", volleyball: "Volleyball", esports: "E-Sport", mma: "MMA" } },
 };
@@ -4780,7 +4780,7 @@ function Logo({ theme, onHome }) {
   </div>;
 }
 
-// Generic full-page panel with a back button (settings, news, ...).
+// Generic full-page panel with a back button (settings, favorites, ...).
 function SimplePage({ title, onBack, t, children }) {
   return <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: FONT }}>
     <div className="mo-sticky" style={{ zIndex: 10, background: COLORS.bg, borderBottom: "1px solid " + COLORS.border,
@@ -5794,8 +5794,8 @@ function LoginScreen({ t, lang, setLang, theme, onClose }) {
     </div></div>;
 }
 
-// Slide-in hamburger drawer: dark/light toggle, language, and links to settings / news.
-function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, onNews, onFavorites }) {
+// Slide-in hamburger drawer: dark/light toggle, language, and links to settings / favorites.
+function MenuDrawer({ onClose, theme, setTheme, lang, setLang, t, onSettings, onFavorites }) {
   var [show, setShow] = useState(false);
   useEffect(function(){
     var r = requestAnimationFrame(function(){ setShow(true); });
@@ -6106,64 +6106,6 @@ function FavoritesPage({ onBack, t, loggedIn, onLogin, onOpenTeam, onOpenPlayer,
   </SimplePage>;
 }
 
-// One news card (big hero or compact grid item). Opens the article in a new tab.
-function NewsCard({ n, big, lang }) {
-  return <a href={n.link} target="_blank" rel="noopener noreferrer"
-    style={{ display: "block", textDecoration: "none", background: COLORS.card, borderRadius: 18, overflow: "hidden",
-      WebkitTapHighlightColor: "transparent", animation: "moFade 0.26s ease both" }}>
-    {n.image && <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", background: COLORS.cardAlt, overflow: "hidden" }}>
-      {/* try the CDN directly first (0 load on us); only browsers the CDN blocks (e.g. Chrome) fall back to our proxy */}
-      <img src={n.image} alt="" loading="lazy"
-        onError={function(e){
-          var img = e.currentTarget;
-          if (img.dataset.proxied) { if (img.parentElement) img.parentElement.style.display = "none"; }
-          else { img.dataset.proxied = "1"; img.src = "/api/img?u=" + encodeURIComponent(n.image); }
-        }}
-        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-    </div>}
-    <div style={{ padding: big ? "14px 16px 16px" : "10px 12px 13px" }}>
-      <div style={{ color: COLORS.textPrimary, fontSize: big ? 17 : 13, fontWeight: big ? 800 : 700, lineHeight: 1.3, marginBottom: 8,
-        display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{n.title}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.textMuted, fontSize: big ? 12 : 11 }}>
-        {n.source && <span style={{ fontWeight: 800, color: COLORS.accent, whiteSpace: "nowrap" }}>{n.source}</span>}
-        {n.date && <span style={{ whiteSpace: "nowrap" }}>· {relTime(n.date, lang)}</span>}
-      </div>
-    </div>
-  </a>;
-}
-
-// News page (/news): a big hero card on top, a grid of smaller cards below.
-function NewsPage({ onBack, t, lang }) {
-  var [news, setNews] = useState(null);
-  useEffect(function(){
-    var cancelled = false;
-    fetch("/api/news").then(function(r){ return r.json(); }).then(function(j){ if (!cancelled) setNews(j.news || []); }).catch(function(){ if (!cancelled) setNews([]); });
-    return function(){ cancelled = true; };
-  }, []);
-  return <SimplePage title={t.news} onBack={onBack} t={t}>
-    <div style={{ maxWidth: 680, margin: "0 auto" }}>
-      {news === null
-        ? <div>
-            <Skeleton w={"100%"} h={200} r={18} />
-            <div className="mo-newsgrid" style={{ display: "grid", gap: 12, marginTop: 14 }}>
-              {[0,1,2,3].map(function(i){ return <div key={i}>
-                <Skeleton w={"100%"} h={116} r={16} />
-                <Skeleton w={"82%"} h={12} style={{ marginTop: 10 }} />
-                <Skeleton w={"48%"} h={10} style={{ marginTop: 8 }} /></div>; })}
-            </div>
-          </div>
-        : news.length === 0
-          ? <EmptyState icon={<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h13v16H6a2 2 0 0 1-2-2z"/><path d="M17 8h3v10a2 2 0 0 1-2 2M8 8h5M8 12h5M8 16h3"/></svg>} title={t.newsSoon} />
-          : <div>
-              <NewsCard n={news[0]} big lang={lang} />
-              <div className="mo-newsgrid" style={{ display: "grid", gap: 12, marginTop: 14 }}>
-                {news.slice(1).map(function(n, i){ return <NewsCard key={i} n={n} lang={lang} />; })}
-              </div>
-            </div>}
-    </div>
-  </SimplePage>;
-}
-
 // Global CSS — rendered on EVERY screen (main + community/settings/etc.) so .mo-matchsheet,
 // .mo-scroll, .mo-sticky and the responsive rules apply even on the early-return pages.
 // ── Loading & empty primitives (modern product-register vocabulary) ──────────
@@ -6234,7 +6176,6 @@ function AppStyles() {
     ".mo-bottomnav{display:flex}@media(min-width:900px){.mo-bottomnav{display:none}}" +
     ".mo-matchsheet{height:90vh}@media(min-width:900px){.mo-matchsheet{height:97vh}}" +
     ".mo-sporttabs{justify-content:flex-start}@media(min-width:900px){.mo-sporttabs{justify-content:center}}" +
-    ".mo-newsgrid{grid-template-columns:repeat(2,1fr)}@media(min-width:700px){.mo-newsgrid{grid-template-columns:repeat(3,1fr)}}" +
     ".mo-logoimg{height:30px}@media(min-width:900px){.mo-logoimg{height:38px}}" +
     ".mo-logoicon{height:34px}@media(min-width:900px){.mo-logoicon{height:44px}}" +
     // light-mode purple navbar: white text/icons/lines, translucent button/input fills, white sport icons
@@ -6270,7 +6211,7 @@ function AppStyles() {
     "}"}</style>;
 }
 
-export default function Home({ initialSport, initialLeagueSlug, initialView }) {
+export default function Home({ initialSport, initialLeagueSlug }) {
   // update the URL in place without a Next.js navigation (no server round-trip, no remount)
   function pushUrl(url) {
     try { if (typeof window !== "undefined") window.history.pushState(null, "", url); } catch (e) {}
@@ -6301,7 +6242,6 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
   var [standouts, setStandouts] = useState([]);
   var [showStandouts, setShowStandouts] = useState(false);
   var [showProfile, setShowProfile] = useState(false);
-  var [showNews, setShowNews] = useState(false);
   var [showSettings, setShowSettings] = useState(false);
   var [showLogin, setShowLogin] = useState(false); // login screen, opened from the header (app is browseable without login)
   var [showMenu, setShowMenu] = useState(false);    // hamburger drawer
@@ -6359,7 +6299,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
 
   // logo click -> back to the main feed (clear search/league/overlays, scroll up)
   function goHome() {
-    setShowProfile(false); setShowSettings(false); setShowNews(false);
+    setShowProfile(false); setShowSettings(false);
     setQuery(""); setSelectedLeague(null);
     setSelectedMatch(null); setSelectedPlayer(null); setSelectedTeam(null);
     setMobileSearch(false); setComingSoon(null); setShowCommunity(false); setShowFavorites(false); setShowPredictions(false);
@@ -6407,15 +6347,10 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     pushUrl("/" + activeSport);
   }
 
-  // deep-link: /news opens the news page on load
-  useEffect(function(){ if (initialView === "news") setShowNews(true); }, []);
-
   // browser back/forward: re-derive sport + league from the URL (still no remount)
   useEffect(function(){
     function onPop() {
       var parts = (typeof window !== "undefined" ? window.location.pathname : "/").split("/").filter(Boolean);
-      if (parts[0] === "news") { setShowNews(true); return; }
-      setShowNews(false);
       var sp = parts[0] || "football";
       if (SPORT_TABS.findIndex(function(s){ return s.id === sp; }) === -1) sp = "football";
       setActiveSport(sp);
@@ -6597,7 +6532,6 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     </div>
     <div style={{ color: COLORS.textMuted, fontSize: 13 }}>{t.moreSoon}</div>
   </SimplePage>;
-  if (showNews) return <><AppStyles /><NewsPage onBack={function(){ setShowNews(false); pushUrl("/" + activeSport); }} t={t} lang={lang} /></>;
   if (comingSoon) return <><AppStyles /><SimplePage title={comingSoon} onBack={function(){ setComingSoon(null); }} t={t}>
     <div style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>Yakında.</div>
   </SimplePage>
@@ -6689,15 +6623,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
                   {t.navPredictions}
                 </button>
               </span>
-              {/* news (label shown on desktop only) */}
-              <button onClick={function(){ setShowNews(true); pushUrl("/news"); }} aria-label={t.news} style={{ height: 38, padding: "0 11px", borderRadius: 12,
-                background: COLORS.cardAlt, border: "none", cursor: "pointer", display: "flex", gap: 7,
-                color: COLORS.textPrimary, fontSize: 13, fontWeight: 700, fontFamily: FONT, whiteSpace: "nowrap",
-                alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" }}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLORS.textPrimary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v12a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9h-3" /><path d="M7 8h6M7 12h6M7 16h4" /></svg>
-                <span className="mo-only-desktop">{t.news}</span>
-              </button>
-              {/* profile (signed in) / sign-in — desktop only, to the right of news; mobile uses the bottom nav */}
+              {/* profile (signed in) / sign-in — desktop only; mobile uses the bottom nav */}
               <span className="mo-only-desktop">
                 {loggedIn
                   ? <button onClick={function(){ setShowProfile(true); }} aria-label="profile" style={{ width: 38, height: 38, borderRadius: 12,
@@ -6842,7 +6768,7 @@ export default function Home({ initialSport, initialLeagueSlug, initialView }) {
     {selectedMatch && <MatchModal match={selectedMatch} isF1={activeSport === "motorsport"} t={t}
       onClose={function(){ setSelectedMatch(null); }} />}
     {showMenu && <MenuDrawer onClose={function(){ setShowMenu(false); }} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} t={t}
-      onSettings={function(){ setShowSettings(true); }} onNews={function(){ setShowNews(true); }}
+      onSettings={function(){ setShowSettings(true); }}
       onFavorites={function(){ setShowFavorites(true); }} />}
     <MobileBottomNav active={(mobileSearch || query) ? "arama" : "mac"} onSelect={onMobileNav} t={t} />
   </div>;

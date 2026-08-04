@@ -9,8 +9,6 @@ export default async function sitemap() {
     urls.push({ url: SITE_URL + "/" + s, changeFrequency: "daily", priority: 0.8 });
   });
 
-  urls.push({ url: SITE_URL + "/news", changeFrequency: "hourly", priority: 0.6 });
-
   // football leagues (the main SEO surface) — resolved from the curated league list
   try {
     const res = await fetch(SITE_URL + "/api/football?mode=leagues&sport=football", { next: { revalidate: 86400 } });
