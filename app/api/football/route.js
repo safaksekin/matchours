@@ -797,8 +797,11 @@ async function handle(request) {
     const season = searchParams.get("season") || 2025;
     if (!id) return Response.json({ player: null });
 
-    const statData = await apiGet("/players?id=" + id + "&season=" + season, 1800);
-    const trophyData = await apiGet("/trophies?player=" + id, 86400);
+    // independent reads → parallel (same two calls, half the wait)
+    const [statData, trophyData] = await Promise.all([
+      apiGet("/players?id=" + id + "&season=" + season, 1800),
+      apiGet("/trophies?player=" + id, 86400),
+    ]);
 
     const trophies = (trophyData || []).map(function (tr) {
       return { league: tr.league || "", country: tr.country || "", season: tr.season || "", place: tr.place || "" };
@@ -806,9 +809,21 @@ async function handle(request) {
     let trophiesWon = 0;
     trophies.forEach(function (tr) { if ((tr.place || "").toLowerCase() === "winner") trophiesWon++; });
 
-    const entry = (statData && statData[0]) ? statData[0] : null;
+    let entry = (statData && statData[0]) ? statData[0] : null;
+    let usedSeason = parseInt(season, 10);
 
-    // no season stats: still show a basic profile card from /players/profiles
+    // A season is labelled by the year it STARTS in and rolls over in July, so for the first weeks
+    // of a new one the API has no stats row yet for most players. That used to drop straight to the
+    // profiles card below — which carries no team — and `teamId` came back null, which is the ONE
+    // field the last-games endpoint needs. The result was a player who looked fine but had an empty
+    // "Son 5 Maç" all summer. So look at the previous season once before giving up: it costs one
+    // upstream call, only on the path that already found nothing, and it is cached like the rest.
+    if (!entry) {
+      const prevData = await apiGet("/players?id=" + id + "&season=" + (usedSeason - 1), 1800);
+      if (prevData && prevData[0]) { entry = prevData[0]; usedSeason = usedSeason - 1; }
+    }
+
+    // still nothing (retired, or never in the API's stats): a basic profile card from /players/profiles
     if (!entry) {
       const prof = await apiGet("/players/profiles?player=" + id, 86400);
       const pp = (prof && prof[0] && prof[0].player) || null;
@@ -824,6 +839,7 @@ async function handle(request) {
           weight: pp.weight || null,
           position: pp.position || null,
           team: { name: null, logo: null },
+          teamId: null, // stated, not implied — the client branches on it
           season: parseInt(season, 10),
           totals: { appearances: 0, goals: 0, assists: 0, minutes: 0, yellow: 0, red: 0, rating: null },
           competitions: [],
@@ -909,7 +925,9 @@ async function handle(request) {
         position: (primary.games && primary.games.position) || p.position || null,
         team: { name: (primary.team && primary.team.name) || null, logo: (primary.team && primary.team.logo) || null },
         teamId: (primary.team && primary.team.id) || null,
-        season: parseInt(season, 10),
+        // the season these numbers are actually FROM, which is not always the one that was asked
+        // for (see the fallback above) — the client keys its last-games call off this
+        season: usedSeason,
         totals: {
           appearances: apps, lineups: lineups, goals: goals, assists: assists, minutes: minutes,
           yellow: yellow, red: red,
@@ -952,10 +970,14 @@ async function handle(request) {
     const done = { FT: 1, AET: 1, PEN: 1 };
     const fixtures = (fxData || []).filter(function (f) { return f.fixture && f.fixture.status && done[f.fixture.status.short]; });
     const out = [];
-    for (let i = 0; i < fixtures.length && out.length < 5; i++) {
-      const f = fixtures[i];
-      const fid = f.fixture.id;
-      const pdata = await apiGet("/fixtures/players?fixture=" + fid, 604800); // finished -> immutable, 7d
+    // Per-fixture player sheets, fetched in PARALLEL batches of 6 instead of the old one-at-a-time
+    // walk. Sequential, a regular starter cost 5 round-trips end to end (~2s cold) and a rotation
+    // player up to 12. Batched, the first six go out together and the second six only if the first
+    // didn't yield 5 featured games — so the worst case fetches the same 12 sheets it always did,
+    // the typical case fetches 6 where it fetched 5–6, and the wall-clock drops to one or two
+    // round-trips. The sheets are immutable (finished matches, 7d cache + Supabase), so the one
+    // occasional extra fetch is a one-time cost per fixture, ever.
+    function featureLine(pdata) {
       let rating = null, mins = null;
       (pdata || []).forEach(function (tp) {
         (tp.players || []).forEach(function (pl) {
@@ -967,6 +989,18 @@ async function handle(request) {
           }
         });
       });
+      return { rating: rating, mins: mins };
+    }
+    for (let start = 0; start < fixtures.length && out.length < 5; start += 6) {
+      const batch = fixtures.slice(start, start + 6);
+      const sheets = await Promise.all(batch.map(function (f) {
+        return apiGet("/fixtures/players?fixture=" + f.fixture.id, 604800); // finished -> immutable, 7d
+      }));
+      for (let i = 0; i < batch.length && out.length < 5; i++) {
+      const f = batch[i];
+      const fid = f.fixture.id;
+      const line = featureLine(sheets[i]);
+      const rating = line.rating, mins = line.mins;
       if (rating == null && (mins == null || mins === 0)) continue; // didn't feature
       const home = f.teams.home, away = f.teams.away;
       const isHome = String(home.id) === String(team);
@@ -985,6 +1019,7 @@ async function handle(request) {
         // open the normal match detail instead of a stub built from the opponent name alone
         match: mapFixture(f, f.league && f.league.name),
       });
+      }
     }
     return Response.json({ games: out });
   }
@@ -995,14 +1030,21 @@ async function handle(request) {
     const season = searchParams.get("season") || 2025;
     if (!id) return Response.json({ team: null });
 
-    const teamData = await apiGet("/teams?id=" + id, 86400);
+    // Wave 1 — everything that only needs the team id, together. Profile, league list and the two
+    // fixture windows used to run one after another (and the two league-dependent reads after THEM),
+    // which put six round-trips end to end on this screen. Same six calls, two waves deep now.
+    const [teamData, leaguesData, upcoming, recent] = await Promise.all([
+      apiGet("/teams?id=" + id, 86400),
+      apiGet("/leagues?team=" + id + "&season=" + season, 3600),
+      apiGet("/fixtures?team=" + id + "&next=5", 120),
+      apiGet("/fixtures?team=" + id + "&last=5", 300),
+    ]);
     const entry = (teamData && teamData[0]) ? teamData[0] : null;
     if (!entry) return Response.json({ team: null });
     const tm = entry.team || {};
     const vn = entry.venue || {};
 
     // pick the domestic league (type "League") this season for stats + standings
-    const leaguesData = await apiGet("/leagues?team=" + id + "&season=" + season, 3600);
     let domestic = null;
     (leaguesData || []).forEach(function (lx) {
       if (!domestic && lx.league && lx.league.type === "League") domestic = lx.league;
@@ -1012,7 +1054,11 @@ async function handle(request) {
     let league = null;
     if (domestic) {
       let rank = null, points = null;
-      const sd = await apiGet("/teams/statistics?team=" + id + "&league=" + domestic.id + "&season=" + season, 1800);
+      // Wave 2 — the two reads that had to wait for the domestic league id, together.
+      const [sd, stData] = await Promise.all([
+        apiGet("/teams/statistics?team=" + id + "&league=" + domestic.id + "&season=" + season, 1800),
+        apiGet("/standings?league=" + domestic.id + "&season=" + season, 600),
+      ]);
       if (sd) {
         const fx = sd.fixtures || {}; const g = sd.goals || {};
         stats = {
@@ -1026,7 +1072,6 @@ async function handle(request) {
           cleanSheets: (sd.clean_sheet && sd.clean_sheet.total) || 0,
         };
       }
-      const stData = await apiGet("/standings?league=" + domestic.id + "&season=" + season, 600);
       if (stData && stData[0] && stData[0].league && stData[0].league.standings) {
         stData[0].league.standings.forEach(function (group) {
           (group || []).forEach(function (row) {
@@ -1037,9 +1082,7 @@ async function handle(request) {
       league = { id: domestic.id, name: domestic.name, logo: domestic.logo, rank: rank, points: points };
     }
 
-    const upcoming = await apiGet("/fixtures?team=" + id + "&next=5", 120);
-    const recent = await apiGet("/fixtures?team=" + id + "&last=5", 300);
-    const fixtures = [];
+    const fixtures = []; // upcoming/recent were fetched in wave 1, with the team profile
     [].concat(upcoming || [], recent || []).forEach(function (item) {
       fixtures.push(mapFixture(item, item.league && item.league.name));
     });
@@ -1266,8 +1309,11 @@ async function handle(request) {
     }
     if (!chosen) return Response.json({ players: [], date: null });
     const all = [];
-    for (const fx of fixtures) {
-      const pdata = await apiGet("/fixtures/players?fixture=" + fx.fixture.id, 600);
+    // three fixtures' sheets, independent → together (same calls, one round-trip of wait)
+    const sheets = await Promise.all(fixtures.map(function (fx) {
+      return apiGet("/fixtures/players?fixture=" + fx.fixture.id, 600);
+    }));
+    sheets.forEach(function (pdata) {
       (pdata || []).forEach(function (entry) {
         const tname = entry.team && entry.team.name;
         (entry.players || []).forEach(function (pp) {
@@ -1284,7 +1330,7 @@ async function handle(request) {
           });
         });
       });
-    }
+    });
     all.sort(function (a, b) { return b.rating - a.rating; });
     return Response.json({ players: all.slice(0, 3), date: chosen });
   }
@@ -1730,13 +1776,19 @@ async function handle(request) {
     // so later opens = 0 API). LIVE -> 30s (slight delay is fine). UPCOMING -> 5 min.
     const finished = status === "finished";
     const T = finished ? 2592000 : (status === "live" ? 30 : 300);
-    const lineupData = await apiGet("/fixtures/lineups?fixture=" + fixtureId, T);
-    const statsData = await apiGet("/fixtures/statistics?fixture=" + fixtureId, T);
-    const eventsData = await apiGet("/fixtures/events?fixture=" + fixtureId, T);
-    const playersData = await apiGet("/fixtures/players?fixture=" + fixtureId, T);
-    // Fixture head (live minute + running score + status) — cached at the same T, so a LIVE match's
-    // detail keeps ticking (30s) instead of relying on the 5-min list feed.
-    const fxData = await apiGet("/fixtures?id=" + fixtureId, T);
+    // The five upstream reads are independent of each other, so they go out TOGETHER. Awaited one
+    // by one (how this used to read) the response time was the SUM of five api-sports round-trips —
+    // 1.5–3s on cold cache — for the exact same number of calls. Parallel, it is the slowest single
+    // one. Same quota, one-fifth the wait; this endpoint is the app's most-opened screen.
+    // fxData = fixture head (live minute + running score + status) — cached at the same T, so a
+    // LIVE match's detail keeps ticking (30s) instead of relying on the 5-min list feed.
+    const [lineupData, statsData, eventsData, playersData, fxData] = await Promise.all([
+      apiGet("/fixtures/lineups?fixture=" + fixtureId, T),
+      apiGet("/fixtures/statistics?fixture=" + fixtureId, T),
+      apiGet("/fixtures/events?fixture=" + fixtureId, T),
+      apiGet("/fixtures/players?fixture=" + fixtureId, T),
+      apiGet("/fixtures?id=" + fixtureId, T),
+    ]);
     const fx = fxData && fxData[0];
     const live = fx ? {
       minute: (fx.fixture && fx.fixture.status && fx.fixture.status.elapsed != null) ? fx.fixture.status.elapsed : null,
