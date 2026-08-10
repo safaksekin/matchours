@@ -418,7 +418,37 @@ async function venueNextByTeamId(teamId) {
     const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
     item = atVenue[0] || homeGames[0] || null;
   }
+  if (!item) item = await nextFixtureByScan(tid, venueId);
   return { venueId: venueId, image: vn.image || null, item: item };
+}
+
+// Date-scan fallback for the lookups above. Measured 2026-08-10 from the deployed worker:
+// /fixtures?team=…&next=… and ?venue=…&next=… fail ~100% from Cloudflare's SHARED egress IPs —
+// api-sports' edge answers them with rateLimit bodies or a bogus "Season field is required"
+// (other tenants on the same IPs are burning the per-IP budget; the key itself is idle) — while
+// /fixtures?date=YYYY-MM-DD answers correctly every time AND is the very URL mode=bydate keeps
+// warm at the edge. So when the direct lookups come back empty, walk the next two weeks of day
+// feeds and take the first fixture that is at this venue or a home game of this team. The feeds
+// are shared by ALL venues (and by the date strip), so the marginal upstream cost after the first
+// scan is ~zero; 14 days covers any in-season gap between home fixtures.
+const SCAN_DAYS = 14;
+const SCAN_OK = { NS: 1, TBD: 1, "1H": 1, HT: 1, "2H": 1, ET: 1, BT: 1, P: 1, SUSP: 1, INT: 1, LIVE: 1 };
+async function nextFixtureByScan(teamId, venueId) {
+  if (!teamId && !venueId) return null;
+  const now = Date.now();
+  for (let i = 0; i < SCAN_DAYS; i++) {
+    const feed = await apiGet("/fixtures?date=" + ymd(new Date(now + i * 86400000)), 120);
+    if (!feed) continue;
+    for (const f of feed) {
+      const st = f.fixture && f.fixture.status && f.fixture.status.short;
+      if (!SCAN_OK[st]) continue;
+      const vId = f.fixture && f.fixture.venue && f.fixture.venue.id;
+      const hId = f.teams && f.teams.home && f.teams.home.id;
+      if ((venueId && vId != null && String(vId) === String(venueId)) ||
+          (teamId && hId != null && String(hId) === String(teamId))) return f;
+    }
+  }
+  return null;
 }
 
 // A Worker's own response is NOT cached by the CDN just because it carries Cache-Control. The edge
@@ -1202,6 +1232,8 @@ async function handle(request) {
       const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
       item = atVenue[0] || homeGames[0] || null;
     }
+    // the &next= shapes fail from shared worker egress (see nextFixtureByScan) — the day feeds don't
+    if (!item) item = await nextFixtureByScan(teamId, venueId);
 
     return Response.json({
       venueId: venueId,
