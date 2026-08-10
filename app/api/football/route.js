@@ -1294,10 +1294,21 @@ async function handle(request) {
   if (mode === "rawfx") {
     const q = searchParams.get("q") || "team=1359&next=5";
     try {
+      // evidence for api-sports support: the worker's egress IP + their response headers (cf-ray is
+      // their request id; the x-ratelimit-* pair shows what their limiter thinks our key has used)
+      let egressIp = null;
+      try { egressIp = await (await fetch("https://api.ipify.org")).text(); } catch (e) {}
+      const t0 = new Date().toISOString();
       const res = await fetch(HOST + "/fixtures?" + q, { headers: hdr() });
       const j = await res.json().catch(function () { return null; });
+      const keep = {};
+      res.headers.forEach(function (v, k) { const lk = k.toLowerCase(); if (lk.indexOf("ratelimit") >= 0 || lk === "cf-ray" || lk === "date" || lk === "server") keep[lk] = v; });
       return Response.json({
+        utc: t0,
+        egressIp: egressIp,
+        url: "/fixtures?" + q,
         httpStatus: res.status,
+        upstreamHeaders: keep,
         errors: (j && j.errors) || null,
         results: j && j.results,
         count: j && j.response ? j.response.length : null,
