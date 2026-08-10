@@ -1254,6 +1254,26 @@ async function handle(request) {
     });
   }
 
+  // ── Diagnostic: what does THIS worker actually get from a raw fixtures call? (temporary) ──
+  // Bypasses apiGet (no cache, no retry) so the upstream's own answer — status, errors, count —
+  // is visible verbatim. Needed because the same call succeeds from a residential IP while the
+  // deployed worker sees empties: this tells us whether that is rate limiting, an IP-keyed WAF,
+  // or a poisoned edge cache.
+  if (mode === "rawfx") {
+    const q = searchParams.get("q") || "team=1359&next=5";
+    try {
+      const res = await fetch(HOST + "/fixtures?" + q, { headers: hdr() });
+      const j = await res.json().catch(function () { return null; });
+      return Response.json({
+        httpStatus: res.status,
+        errors: (j && j.errors) || null,
+        results: j && j.results,
+        count: j && j.response ? j.response.length : null,
+        first: j && j.response && j.response[0] ? { home: j.response[0].teams.home.name, away: j.response[0].teams.away.name, date: j.response[0].fixture.date } : null,
+      }, { headers: { "Cache-Control": "no-store" } });
+    } catch (e) { return Response.json({ error: String(e) }, { headers: { "Cache-Control": "no-store" } }); }
+  }
+
   // ── Diagnostic: api-sports account plan + rate limits (temporary) ──
   if (mode === "quota") {
     try {
