@@ -148,7 +148,26 @@ async function sbCacheSet(path, payload, ttl) {
   } catch (e) { /* cache write is best-effort */ }
 }
 
+// In-flight coalescing: concurrent apiGet calls for the SAME url share ONE upstream fetch instead
+// of racing each other past the edge cache (the classic cache stampede — a cold popular URL hit by
+// N simultaneous users used to fire N upstream calls at once, which is what actually breaks the
+// 7 req/s plan limit; users only multiply upstream load through misses like this, never through
+// cache hits). Scoped to the worker isolate — that is exactly where the simultaneous misses happen.
+const inflight = new Map(); // url -> Promise<response|null>
+
 async function apiGet(path, revalidate, _retried) {
+  const url = HOST + path;
+  // retries re-enter apiGet with the same url — they must not coalesce with themselves
+  if (!_retried && inflight.has(url)) return inflight.get(url);
+  const p = apiGetRaw(path, revalidate, _retried);
+  if (!_retried) {
+    inflight.set(url, p);
+    p.finally(() => { if (inflight.get(url) === p) inflight.delete(url); });
+  }
+  return p;
+}
+
+async function apiGetRaw(path, revalidate, _retried) {
   const ttl = revalidate || 60;
   const url = HOST + path;
   const persist = ttl >= PERSIST_TTL; // immutable-ish -> also back it with Supabase
@@ -171,9 +190,14 @@ async function apiGet(path, revalidate, _retried) {
       }
     }
     const res = await fetch(url, { headers: hdr() });
+    // Rate-limited / transient -> back off and retry, TWICE, with growing waits. One 900ms retry
+    // was not enough: the Ultra plan's limit is 7 req/SECOND, and this route's own Promise.all
+    // fan-outs (mode=team fires 4-6 at once) trip it under concurrent users — every fixture list
+    // then answered [] while the dashboard showed no errors and a near-idle daily count, which is
+    // exactly the "only major stadiums have matches" bug (the majors were just edge-cached).
+    const n = _retried | 0;
     if (!res.ok) {
-      // rate-limited / transient -> wait briefly and retry once (limits are per-second)
-      if (!_retried && (res.status === 429 || res.status >= 500)) { await sleep(900); return apiGet(path, revalidate, true); }
+      if (n < 2 && (res.status === 429 || res.status >= 500)) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
       return null;
     }
     const text = await res.text();
@@ -182,7 +206,8 @@ async function apiGet(path, revalidate, _retried) {
     const errs = j && j.errors;
     const hasErr = errs && (Array.isArray(errs) ? errs.length > 0 : Object.keys(errs).length > 0);
     if (hasErr) {
-      if (!_retried) { await sleep(900); return apiGet(path, revalidate, true); } // retry rate-limited once
+      // api-sports reports the per-second/minute limit as a 200 with `errors`, so it lands here
+      if (n < 2) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
       return null;
     }
     const resp = (j && j.response) ? j.response : null;
