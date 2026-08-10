@@ -344,6 +344,9 @@ function mapFixture(item, leagueName) {
     season: item.league && item.league.season,
     round: (item.league && item.league.round) || null,
     status: statusOf(short),
+    // the raw API short (1H/HT/2H/ET/BT/P/…): `status` collapses every in-play state to "live",
+    // but the interval, extra time and a shootout each need their own clock label client-side
+    statusShort: short || null,
     dateKey: d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
@@ -1181,10 +1184,13 @@ async function handle(request) {
       fixture: item ? mapFixture(item, item.league && item.league.name) : null,
     }, {
       // The native app's Passport MAP popup fetches this from INSIDE a WebView (opaque origin) → needs CORS.
-      // Short edge cache so repeat taps across users don't re-run the lookup.
+      // Short edge cache so repeat taps across users don't re-run the lookup. SWR 60, not 3600:
+      // an answer cached during an upstream hiccup says "no upcoming match" at grounds that plainly
+      // have one, and an hour of serve-stale kept that lie alive long after the edge could revalidate.
+      // An EMPTY answer is also cached briefly (60s) rather than for the full 15 minutes.
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600",
+        "Cache-Control": "public, s-maxage=" + (item ? 900 : 60) + ", stale-while-revalidate=60",
       },
     });
   }
@@ -1210,9 +1216,16 @@ async function handle(request) {
     // would keep pointing at a dead match instead of moving on to that venue's real next fixture.
     const full = items.length >= Math.min(limit, ids.length);
     const hasLive = items.some(function (it) { return it.fixture && it.fixture.status === "live"; });
-    const maxAge = !full ? 30 : (hasLive ? 30 : 900);
+    // A TODAY fixture is about to change state (kickoff → live → FT), and an answer cached in the
+    // kickoff race window says "next league match" while the real one is being played at the ground —
+    // so match day gets the live-grade TTL too, not just matches already in play.
+    const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
+    const hasToday = items.some(function (it) { return it.fixture && it.fixture.dateKey === todayKey; });
+    const maxAge = !full || hasLive || hasToday ? 30 : 900;
+    // SWR 60, not 3600: an hour of serve-stale on top of the cache was how a dead answer kept
+    // winning long after the edge could have revalidated it.
     return Response.json({ items: items }, {
-      headers: { "Cache-Control": "public, s-maxage=" + maxAge + ", stale-while-revalidate=3600" },
+      headers: { "Cache-Control": "public, s-maxage=" + maxAge + ", stale-while-revalidate=60" },
     });
   }
 
