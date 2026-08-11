@@ -13,6 +13,12 @@ import { fetchMyRating, saveRating, fetchComments, fetchMatchComments, addCommen
   fetchUserLogs, fetchUserComments, uploadLogPhoto, fetchMyRatedPlayers, backfillLogLogos,
   fetchMyAvatar, fetchUserAvatar, uploadAvatar, fetchFavMatches, saveFavMatches, fetchCompatibility, fetchHotTakes } from "./lib/db";
 
+// 280 — X's number, and the same cap the native app writes with (App.js POST_MAX). It is also a
+// CHECK constraint on comments.body now (supabase/migrations/20260812_text_limits.sql), so this is
+// not a style rule: without it a longer comment is accepted by the input, posted optimistically,
+// and then silently rejected by Postgres.
+var COMMENT_MAX = 280;
+
 // ── Favorites: a tiny module-level store so the save button works everywhere
 // (search rows, player sheet, detail modals, favorites page) without prop-drilling. ──
 var FAV = { map: {}, loaded: false, listeners: new Set(), loggedIn: false, onNeedLogin: null };
@@ -846,6 +852,7 @@ function CommentSection({ match, t }) {
   return <div>
     <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
       <input value={v} onChange={function(e){ setV(e.target.value); }} onKeyDown={function(e){ if (e.key==="Enter") submit(); }}
+        maxLength={COMMENT_MAX}
         placeholder={t.writeComment} style={{ flex: 1, padding: "9px 13px", background: COLORS.cardAlt,
         border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
       <button onClick={submit} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
@@ -1397,6 +1404,7 @@ function PlayerMatchSheet({ player, matchId, matchName, match, t, onClose }) {
         <div style={{ display: "flex", gap: 8 }}>
           <input value={pComment} onChange={function(e){ setPComment(e.target.value); }}
             onKeyDown={function(e){ if (e.key === "Enter") addComment(); }}
+            maxLength={COMMENT_MAX}
             placeholder={t.writeComment} style={{ flex: 1, minWidth: 0, padding: "9px 13px", background: COLORS.cardAlt,
               border: "none", borderRadius: 12, color: COLORS.textPrimary, fontSize: 13, outline: "none", fontFamily: FONT }} />
           <button onClick={addComment} style={{ padding: "9px 16px", background: COLORS.accent, border: "none", borderRadius: 12,
