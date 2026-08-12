@@ -114,10 +114,16 @@ all.sort((a, b) => {
   const ia = FIRST.indexOf(a.name), ib = FIRST.indexOf(b.name);
   return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.name.localeCompare(b.name);
 });
-console.log('countries (' + all.length + '): ' + all.map((c) => c.name).join(', '));
+// Optional narrowing for follow-up passes:  ONLY="England,Turkey" limits the sweep to those
+// countries, and RETRY_MISSES=1 re-asks stamped misses regardless of their 3-day cool-off —
+// used to heal stretches where a long run tripped Nominatim's soft limits and a whole block of
+// real grounds (Broadfield, Holker Street…) got stamped as misses.
+const ONLY = (process.env.ONLY || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const filtered = ONLY.length ? all.filter((c) => ONLY.includes(c.name.toLowerCase())) : all;
+console.log('countries (' + filtered.length + '): ' + filtered.map((c) => c.name).join(', '));
 
 let added = 0, linked = 0, skipped = 0, misses = 0, done = 0;
-for (const C of all) {
+for (const C of filtered) {
   const rows = await apiTeams(C.name);
   console.log(C.name + ': ' + rows.length + ' clubs');
   for (const r of rows) {
@@ -132,11 +138,15 @@ for (const C of all) {
     if (known) { if (known[4] == null) { known[4] = teamId; linked++; } else skipped++; continue; }
 
     const key = 'v' + v.id;
-    // A cached null is retried ONCE PER RUN, not trusted forever: the old run cached a null for
-    // any transient failure too (Nominatim 429s / network), which is how HALF of England's grounds
+    // A cached miss is retried, but not on every restart: the original run cached a null for any
+    // transient failure too (Nominatim 429s / network), which is how HALF of England's grounds
     // (Broadfield, Holker Street, Wetherby Road…) became permanent misses that all resolve fine
-    // when asked again. True misses just re-null and cost one polite retry per run.
-    if (!(key in cache) || (cache[key] === null && !retriedNulls.has(key))) {
+    // when asked again. A retried-and-still-missing venue is stamped {m: <ms>} and left alone for
+    // 3 days — resumed runs used to burn ~half an hour re-asking England's true misses before
+    // reaching any new country. Legacy nulls (no stamp) always qualify for one retry.
+    const c = cache[key];
+    const staleMiss = c === null || (c && c.m && (process.env.RETRY_MISSES === '1' || Date.now() - c.m > 3 * 86400000));
+    if (!(key in cache) || (staleMiss && !retriedNulls.has(key))) {
       retriedNulls.add(key);
       const city = (v.city || '').trim();
       const addr = (v.address || '').trim();
@@ -148,12 +158,12 @@ for (const C of all) {
         // in OSM under this (often sponsor-renamed) name; the street is adjacent to the ground.
         if (!hit && addr && city) { hit = await nominatim(addr + ', ' + city, C.cc); await sleep(1100); }
       } catch (e) { /* network blip → treated as miss, rerun resumes it */ }
-      cache[key] = hit ? { lat: hit.lat, lng: hit.lng, name, cap: v.capacity || 0 } : null;
+      cache[key] = hit ? { lat: hit.lat, lng: hit.lng, name, cap: v.capacity || 0 } : { m: Date.now() };
       saveCache();
       if (done % 25 === 0) console.log('  … ' + done + ' processed (' + added + ' added, ' + linked + ' linked so far)');
     }
     const g = cache[key];
-    if (!g) { misses++; continue; }
+    if (!g || g.lat == null) { misses++; continue; } // null OR a {m:…} miss-stamp
     // same ground under a sponsor-renamed entry? retrofit that one instead of a duplicate pin
     const nearDupe = world.find((e) => kmBetween(e[1], e[2], g.lat, g.lng) < 0.25);
     if (nearDupe) { if (nearDupe[4] == null) { nearDupe[4] = teamId; linked++; } else skipped++; continue; }
