@@ -155,6 +155,29 @@ async function sbCacheSet(path, payload, ttl) {
 // cache hits). Scoped to the worker isolate — that is exactly where the simultaneous misses happen.
 const inflight = new Map(); // url -> Promise<response|null>
 
+// ── Static-egress relay (optional, set RELAY_URL to enable) ────────────────
+// api-sports enforce their per-minute limit per SOURCE IP as well as per key, and they have told us
+// (2026-08-12) they cannot whitelist or key-scope a shared IP: "for reliable production use, route
+// your requests through infrastructure with a dedicated/static outbound IP". Cloudflare Workers
+// egress from a pool shared with every other tenant, so our idle key keeps meeting a limit other
+// people filled. `relay/` in this repo is that piece of infrastructure — a ~40-line forwarder meant
+// for the cheapest box with a fixed IPv4.
+//
+// Enabling it is deploy config, not a code change: set RELAY_URL (+ RELAY_SECRET) as Worker secrets
+// and every upstream call routes through it. With none set, calls go direct exactly as before.
+// A relay that is down, unreachable or misconfigured falls back to the direct call rather than
+// taking the app with it — the box is an optimisation, never a dependency.
+const RELAY_URL = (process.env.RELAY_URL || "").replace(/\/+$/, "");
+function directFetch(path) { return fetch(HOST + path, { headers: hdr() }); }
+async function upstream(path) {
+  if (!RELAY_URL) return directFetch(path);
+  try {
+    const res = await fetch(RELAY_URL + path, { headers: { "x-relay-key": process.env.RELAY_SECRET || "" } });
+    if (res.ok) return res;
+  } catch (e) { /* relay down → direct */ }
+  return directFetch(path);
+}
+
 async function apiGet(path, revalidate, _retried) {
   const url = HOST + path;
   // retries re-enter apiGet with the same url — they must not coalesce with themselves
@@ -189,7 +212,7 @@ async function apiGetRaw(path, revalidate, _retried) {
         return sb;
       }
     }
-    const res = await fetch(url, { headers: hdr() });
+    const res = await upstream(path);
     // Rate-limited / transient -> back off and retry, TWICE, with growing waits. One 900ms retry
     // was not enough: the Ultra plan's limit is 7 req/SECOND, and this route's own Promise.all
     // fan-outs (mode=team fires 4-6 at once) trip it under concurrent users — every fixture list
@@ -399,9 +422,12 @@ function mapFixture(item, leagueName) {
 async function venueNextByTeamId(teamId) {
   const td = await apiGet("/teams?id=" + encodeURIComponent(teamId), 86400);
   const e = td && td[0];
-  if (!e) return { venueId: null, image: null, item: null };
-  const tid = (e.team && e.team.id) || parseInt(teamId, 10) || null;
-  const vn = e.venue || {};
+  // A throttled /teams lookup is NOT a dead end: the caller already handed us the team id, and the
+  // day-feed scan needs nothing else. Bailing here is what made a ground flip to "no upcoming match"
+  // for one visitor and answer fine for the next — the ground was never the problem, one upstream
+  // call was. Only the venue photo/id genuinely depend on this lookup.
+  const tid = (e && e.team && e.team.id) || parseInt(teamId, 10) || null;
+  const vn = (e && e.venue) || {};
   const venueId = vn.id || null;
   let item = null;
   if (tid) {
@@ -1177,8 +1203,11 @@ async function handle(request) {
     if (teamIdParam) {
       const td = await apiGet("/teams?id=" + encodeURIComponent(teamIdParam), 86400);
       const e = td && td[0];
+      // Trust the id we were GIVEN even when the lookup itself was throttled — only the venue
+      // id/photo need that call, and the day-feed scan can still find the fixture from the id
+      // alone. (Same reasoning as venueNextByTeamId.)
+      teamId = (e && e.team && e.team.id) || parseInt(teamIdParam, 10) || null;
       if (e) {
-        teamId = (e.team && e.team.id) || parseInt(teamIdParam, 10) || null;
         const vn = e.venue || {};
         venueId = vn.id || null;
         image = vn.image || null;
