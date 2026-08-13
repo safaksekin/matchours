@@ -50,7 +50,14 @@ if (!GEO || !fs.existsSync(GEO)) { console.error('GEONAMES=<path to cities500.tx
 
 const OUT = 'public/destinations.json';
 const CC_PATH = 'scripts/venues-country-cache.json';
-const AMBIG_KM = 40; // same rule as the coordinate fixer: a name shared by two distant places is unusable
+const AMBIG_KM = 40; // two places of one name further apart than this need a tie-break, below
+// A place this size, matching on its OWN name, is the place — no further argument needed.
+const CONFIDENT_POP = 5000;
+// Below this, a place is a hamlet, and a hamlet is not where a club with a ground plays. Only used
+// to break one specific tie: "Kocaeli" is a 602-person village near Balıkesir AND the province
+// Kocaelispor play in, and the village is the only row carrying the name as its own. Preferring it
+// put the destination 300km from the club.
+const VILLAGE_POP = 2000;
 // Only cities this size get their foreign-language spellings indexed. Below it, nobody has invented
 // a different word for the place — Karlsruhe is Karlsruhe in every language — so the alternates are
 // noise and weight.
@@ -97,16 +104,62 @@ for (const line of fs.readFileSync(GEO, 'utf8').split('\n')) {
   if (f.length < 15) continue;
   const lat = parseFloat(f[4]), lng = parseFloat(f[5]), cc = f[8], pop = parseInt(f[14], 10) || 0;
   if (!cc || !isFinite(lat)) continue;
+  // Primary names and alternates are indexed separately. A row's own name is evidence about where
+  // it is; an alternate is only evidence that somebody once called it that — Ergani's alternates
+  // include "Osmaniye" and Yayladağı's include "Ordu", which is not the same claim at all.
+  const primary = new Set([norm(f[1]), norm(f[2])].filter(Boolean));
   for (const n of [f[1], f[2]].concat((f[3] || '').split(',')).filter(Boolean)) {
     const nn = norm(n);
     if (!nn) continue;
     const k = cc + '|' + nn;
-    const p = places[k] || (places[k] = { best: null, pts: [] });
-    p.pts.push({ lat, lng });
-    if (!p.best || p.best.pop < pop) p.best = { lat, lng, pop, name: f[1], ascii: f[2], alt: f[3] || '' };
+    const p = places[k] || (places[k] = { cands: [], seen: new Set() });
+    // One row can reach the same key by several of its names — its own, its ASCII form and an
+    // alternate all fold together — and counting it three times made it its own rival: the
+    // dominance test below compared Aydın's 163,022 against a copy of itself and refused the name.
+    if (p.seen.has(f[0])) {
+      const prev = p.cands.find((c) => c.id === f[0]);
+      if (prev && primary.has(nn)) prev.primary = true;
+      continue;
+    }
+    p.seen.add(f[0]);
+    p.cands.push({ id: f[0], lat, lng, pop, name: f[1], ascii: f[2], alt: f[3] || '', primary: primary.has(nn) });
   }
 }
-for (const p of Object.values(places)) p.spread = Math.max(...p.pts.map((q) => hav(p.best.lat, p.best.lng, q.lat, q.lng)));
+// Resolve each name to ONE place, or to nothing.
+//
+// The old rule — reject if any two namesakes sit more than AMBIG_KM apart — threw away far more than
+// it protected. Osmaniye has a club and 202,837 people; it was dropped because Ergani, 336km away,
+// carries "Osmaniye" as a former name. So did Ordu, Giresun, Aydın, Karabük and 29 other Turkish
+// towns with a club, and the same everywhere else.
+//
+// So: a candidate matching on its own name outranks one matching on an alternate, and among equals
+// population decides — but only when it decides CLEARLY. Where two real places share a name and
+// neither dominates, the name still resolves to nothing, which is what protects Sainte-Marie in
+// Martinique from being answered with Sainte-Marie in Moselle.
+for (const p of Object.values(places)) {
+  const own = p.cands.filter((c) => c.primary);
+  const pick = (list) => list.reduce((a, b) => (a.pop >= b.pop ? a : b));
+  let best = null;
+  // A hamlet holding the name as its own loses to a real town holding it as an alternate.
+  const ownTop = own.length ? pick(own) : null;
+  const outgunned = ownTop && ownTop.pop < VILLAGE_POP &&
+    p.cands.some((c) => !c.primary && c.pop >= 5 * Math.max(ownTop.pop, 1));
+  if (own.length && !outgunned) {
+    const top = pick(own);
+    const rival = own.filter((c) => c !== top);
+    const far = rival.some((c) => hav(top.lat, top.lng, c.lat, c.lng) > AMBIG_KM);
+    // One place with this name, or one that plainly dwarfs the others.
+    if (!far || (top.pop >= CONFIDENT_POP && top.pop >= 5 * Math.max(...rival.map((c) => c.pop), 1))) best = top;
+  }
+  if (!best) {
+    const top = pick(p.cands);
+    const rival = p.cands.filter((c) => c !== top);
+    const far = rival.some((c) => hav(top.lat, top.lng, c.lat, c.lng) > AMBIG_KM);
+    if (!far || (top.pop >= CONFIDENT_POP && top.pop >= 5 * Math.max(...rival.map((c) => c.pop), 1))) best = top;
+  }
+  p.best = best;
+  p.ambiguous = !best;
+}
 
 const meta = JSON.parse(fs.readFileSync(CC_PATH, 'utf8')).meta || {};
 
@@ -128,9 +181,9 @@ for (const t of Object.values(towns)) {
   const cc = codeOf[t.country];
   const p = cc && places[cc + '|' + norm(t.town)];
   if (!p) { noPlace++; continue; }
-  // A town whose name belongs to two distant places cannot be offered as one destination: picking
-  // either would silently answer a different question than the user asked.
-  if (p.spread > AMBIG_KM) { ambiguous++; continue; }
+  // A town whose name resolves to two real places and no clear winner cannot be offered as one
+  // destination: picking either would silently answer a different question than the user asked.
+  if (p.ambiguous) { ambiguous++; continue; }
   // Every spelling worth answering to: what the API writes, what the place calls itself, the ASCII
   // form, and — for cities big enough that other languages have their own word for them — a slice of
   // the gazetteer's alternate names, so a Turkish user typing "Münih" finds Munich and a German
