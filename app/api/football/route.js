@@ -477,6 +477,44 @@ async function nextFixtureByScan(teamId, venueId) {
   return null;
 }
 
+// The same scan, answered for MANY teams at once — what mode=nearby needs.
+//
+// Running nextFixtureByScan per ground was quietly capping the nearby feed: a Worker gets a fixed
+// subrequest budget per request, and ten grounds × (team lookup + live + venue + next + up to 14
+// scan days) blew straight through it. Measured from İstanbul: 3 grounds returned 3 matches, 6
+// grounds returned 2, 10 grounds returned 1 — the more we asked for, the less we got, which reads
+// exactly like the "no nearby matches" the passport was showing in a city full of football.
+//
+// A day feed is the SAME document for every ground, so fetching it once and bucketing by home team
+// answers all of them: ~14 shared (already edge-warm) calls total instead of ~14 per ground. Days
+// are walked in order, so the first fixture recorded for a team is its soonest, and today's feed
+// carries live matches too — a game in progress at a ground wins there, as it should.
+async function nearbyByScan(ids, limit) {
+  const want = new Set(ids.map(String));
+  const found = new Map(); // teamId -> fixture item
+  const now = Date.now();
+  for (let i = 0; i < SCAN_DAYS && found.size < want.size; i++) {
+    const feed = await apiGet("/fixtures?date=" + ymd(new Date(now + i * 86400000)), 120);
+    if (!feed) continue;
+    // within a day, earliest kick-off first, so "soonest" holds inside the day as well as across days
+    const day = feed.slice().sort(function (a, b) {
+      return String((a.fixture && a.fixture.date) || "").localeCompare(String((b.fixture && b.fixture.date) || ""));
+    });
+    for (const f of day) {
+      const st = f.fixture && f.fixture.status && f.fixture.status.short;
+      if (!SCAN_OK[st]) continue;
+      const hId = f.teams && f.teams.home && f.teams.home.id;
+      if (hId == null) continue;
+      const key = String(hId);
+      if (want.has(key) && !found.has(key)) found.set(key, f);
+    }
+  }
+  // ids arrive in DISTANCE order and stay in it — nearest grounds first, then take `limit`.
+  return ids.filter(function (id) { return found.has(String(id)); })
+            .slice(0, limit)
+            .map(function (id) { return { teamId: id, item: found.get(String(id)) }; });
+}
+
 // A Worker's own response is NOT cached by the CDN just because it carries Cache-Control. The edge
 // cache sits in FRONT of the Worker and, for a dynamic route, is never consulted — the header alone
 // only ever talked to intermediaries that aren't there. So the Worker has to do the storing itself,
@@ -1290,10 +1328,25 @@ async function handle(request) {
   if (mode === "nearby") {
     const ids = (searchParams.get("teams") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 10);
     const limit = Math.min(parseInt(searchParams.get("limit") || "3", 10) || 3, 5);
-    const items = [];
-    for (let i = 0; i < ids.length && items.length < limit; i++) {
-      const r = await venueNextByTeamId(ids[i]);
-      if (r.item) items.push({ teamId: ids[i], fixture: mapFixture(r.item, r.item.league && r.item.league.name) });
+    // The shared day-feed scan answers every ground in one pass (see nearbyByScan) — the old
+    // per-ground walk ran out of the Worker's subrequest budget and returned FEWER matches the more
+    // grounds it was given.
+    const items = (await nearbyByScan(ids, limit)).map(function (r) {
+      return { teamId: r.teamId, fixture: mapFixture(r.item, r.item.league && r.item.league.name) };
+    });
+    // Only if the scan came up short do we spend the expensive per-ground lookups, and only on the
+    // grounds it missed: those are the ones whose next home game falls outside the scan window.
+    if (items.length < limit) {
+      const have = new Set(items.map(function (it) { return String(it.teamId); }));
+      for (let i = 0; i < ids.length && items.length < limit; i++) {
+        if (have.has(String(ids[i]))) continue;
+        const r = await venueNextByTeamId(ids[i]);
+        if (r.item) items.push({ teamId: ids[i], fixture: mapFixture(r.item, r.item.league && r.item.league.name) });
+      }
+      // distance order again — the top-ups were appended after the scan's results
+      const rank = {};
+      ids.forEach(function (id, i) { rank[String(id)] = i; });
+      items.sort(function (a, b) { return rank[String(a.teamId)] - rank[String(b.teamId)]; });
     }
     // Only a FULL result earns the long cache. A short one may be a cold-cache blip (an underlying fixture
     // call not warm yet), so cache it briefly — it re-heals within 30s instead of being stuck for 15m.
