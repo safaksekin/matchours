@@ -1327,7 +1327,11 @@ async function handle(request) {
   // app maps team id → its own stadium record for the name/city/distance shown on each card.
   if (mode === "nearby") {
     const ids = (searchParams.get("teams") || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 10);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "3", 10) || 3, 5);
+    // Cap 10, was 5: the app now ranks candidates by attendability (time × distance) client-side,
+    // and a re-ranker fed only the three nearest answers can never surface tonight's match at the
+    // seventh-nearest ground. The scan below answers all grounds in ONE pass, so a bigger limit
+    // costs nothing there; the per-ground fallback walk is what's bounded separately.
+    const limit = Math.min(parseInt(searchParams.get("limit") || "3", 10) || 3, 10);
     // The shared day-feed scan answers every ground in one pass (see nearbyByScan) — the old
     // per-ground walk ran out of the Worker's subrequest budget and returned FEWER matches the more
     // grounds it was given.
@@ -1336,10 +1340,16 @@ async function handle(request) {
     });
     // Only if the scan came up short do we spend the expensive per-ground lookups, and only on the
     // grounds it missed: those are the ones whose next home game falls outside the scan window.
+    // BOUNDED at 6 lookups now that limit can be 10 — venueNextByTeamId costs multiple upstream
+    // calls apiece, and an unbounded walk over ten missing grounds is how this route once ran out
+    // of the Worker's subrequest budget. Six top-ups on top of the scan is plenty of material for
+    // the app's ranker; a ground beyond that would have scored near the floor anyway.
     if (items.length < limit) {
       const have = new Set(items.map(function (it) { return String(it.teamId); }));
-      for (let i = 0; i < ids.length && items.length < limit; i++) {
+      let lookups = 0;
+      for (let i = 0; i < ids.length && items.length < limit && lookups < 6; i++) {
         if (have.has(String(ids[i]))) continue;
+        lookups++;
         const r = await venueNextByTeamId(ids[i]);
         if (r.item) items.push({ teamId: ids[i], fixture: mapFixture(r.item, r.item.league && r.item.league.name) });
       }
