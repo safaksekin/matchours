@@ -1624,6 +1624,11 @@ async function handle(request) {
     const noted = uniq.filter(function (p) { return rank(p) <= 1; }); // attackers + midfielders
     const pool = noted.length ? noted : uniq;
     const rating = pool.length ? [pool[hashStr(fixture || (home + "-" + away)) % pool.length]] : [];
+    // An empty pool is either an upstream failure or squads that haven't landed yet — either way it
+    // is worthless to cache anywhere (the client would pin "kadro yok" for ttlForStatus, 30 days on
+    // a finished match). 502 + no-store: the client's catch path degrades to the same empty UI,
+    // uncached, and the next open re-tries.
+    if (!uniq.length) return jsonNoStore({ players: [], rating: [], lineups: null, error: "empty" }, 502);
     return Response.json({ players: uniq, rating: rating, lineups: haveLineups ? sides : null });
   }
 
@@ -1858,6 +1863,10 @@ async function handle(request) {
     const home = searchParams.get("home");
     const away = searchParams.get("away");
     const data = await apiGet("/fixtures/headtohead?h2h=" + home + "-" + away + "&last=20", 300);
+    // null = the upstream call failed (a real "no meetings yet" is []). Served as a 200, the app
+    // caches the empty record for TTL.static (30 days) on that device; a 502 makes cachedJSON throw,
+    // so the client shows its graceful empty state WITHOUT pinning it.
+    if (data === null) return jsonNoStore({ h2h: null, list: [], error: "upstream" }, 502);
     let homeWins = 0, awayWins = 0, draws = 0;
     const list = [];
     (data || []).forEach(function (item) {
@@ -2170,7 +2179,24 @@ async function handle(request) {
     // Same TTL rule the upstream calls use (T above): a finished match is a historical record, a live
     // one is worth 30 seconds. This is the heaviest response in the file — lineups, per-player stats,
     // timeline — so serving it from the colo is where the biggest saving is.
-    return jsonCached({
+    //
+    // UNLESS an upstream call failed. apiGet answers `null` on failure (rate limit exhausted, 5xx)
+    // and `[]` when the fixture genuinely has no data, so `null` anywhere means this detail is a
+    // fetch failure wearing a 200 — and each colo has its OWN edge cache, so caching it for T
+    // (30 DAYS on a finished match) nails "kadro bilgisi yok" into ONE region while another serves
+    // the full payload. That is exactly two users on the same match seeing different screens.
+    // A failed assembly is marked `partial` (the app declines to cache it) and held for 30s only —
+    // long enough to absorb a stampede, short enough that the next opener re-tries upstream.
+    const upstreamFailed = lineupData === null || statsData === null || eventsData === null ||
+      playersData === null || fxData === null;
+    // A finished match with NO stats, NO lineups and NO events is usually not "uncovered" — it is
+    // "covered, but the data lands upstream a few minutes after FT". Whoever opens it inside that
+    // window must not seal the empty answer for 30 days (the uncovered-match cost of this is a few
+    // extra upstream calls per open, all 30s-edge-absorbed).
+    const emptyFinished = finished && !hasMatchStats &&
+      !(lineupData && lineupData.length) && !(eventsData && eventsData.length);
+    const partial = upstreamFailed || emptyFinished;
+    const body = {
       detail: {
         lineups: { home: homeLU, away: awayLU },
         stats: { home: homeStats, away: awayStats },
@@ -2181,8 +2207,10 @@ async function handle(request) {
         season: { home: homeSeason, away: awaySeason },
         playerStats: { home: homePlayers, away: awayPlayers },
         live: live,
+        partial: partial || undefined,
       },
-    }, T, T * 4);
+    };
+    return partial ? jsonCached(body, 30, 30) : jsonCached(body, T, T * 4);
   }
 
   // ── List: everything that is live, or kicking off / played within the window ──
