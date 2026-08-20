@@ -1,10 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "matchours",
-  "main": ".open-next/worker.js",
+  // cron-worker.js wraps the generated .open-next/worker.js: same fetch handler, plus the
+  // `scheduled` export that Workers cron triggers require (prewarms finished fixtures — see
+  // app/api/football/route.js `mode=prewarm`).
+  "main": "cron-worker.js",
   "workers_dev": false,
   "compatibility_date": "2025-03-25",
   "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    // every 10 minutes; a run that finds nothing new to warm costs a fixture-list read and one
+    // Supabase marker query, so the quiet hours are near-free
+    "crons": ["*/10 * * * *"]
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

@@ -42,6 +42,26 @@ function systemFor(lang) {
   );
 }
 
+// The first BALANCED {...} in a string — brace-counting, and blind to braces inside string values
+// so a quoted "{" in the portrait cannot end the object early. Returns null when there is no
+// complete object (a truncated completion), which is the caller's cue to fall back rather than
+// hand back half a payload.
+function firstJsonObject(s) {
+  const start = s.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) return s.slice(start, i + 1); }
+  }
+  return null;
+}
+
 function line(arr, label, v) { if (v !== undefined && v !== null && v !== "" && v !== "?") arr.push(label + ": " + v); }
 
 function buildContext(b) {
@@ -99,21 +119,35 @@ export async function POST(request) {
   raw = ((raw && raw.text) || "").trim();
   if (!raw) return Response.json({ error: "empty", text: "" });
 
-  // JSON mode should hand back the object directly; the fallbacks cover a model that wrapped it
-  // in prose anyway. Worst case the whole answer becomes the text and the archetype stays empty —
-  // the app renders that fine.
+  // JSON mode USUALLY hands back the object directly, but not always: seen in production (twice on
+  // 2026-08-19), the model appended a stray closing brace —
+  //     {"archetype":"Karakter Avcısı","text":"…"}\n}
+  // — which is not valid JSON, so the strict parse threw. The old fallback then made it worse: its
+  // regex `\{[\s\S]*\}` is GREEDY, so it ran from the first `{` to the LAST `}` and dutifully
+  // re-selected the same malformed string, failed again, and fell through to `text = raw`. The card
+  // then rendered the raw JSON at the user, archetype blank. Scanning for the first BALANCED object
+  // instead stops at the brace that actually closes it and ignores the trailing junk entirely.
   let archetype = "", text = "";
-  try {
-    const parsed = JSON.parse(raw);
-    archetype = String(parsed.archetype || "").trim();
-    text = String(parsed.text || "").trim();
-  } catch (e) {
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (m) {
-      try { const p2 = JSON.parse(m[0]); archetype = String(p2.archetype || "").trim(); text = String(p2.text || "").trim(); } catch (e2) {}
-    }
-    if (!text) text = raw;
+  const obj = firstJsonObject(raw);
+  if (obj) {
+    try {
+      const p = JSON.parse(obj);
+      archetype = String(p.archetype || "").trim();
+      text = String(p.text || "").trim();
+    } catch (e) {}
   }
+  // Last resort: pull the field out by hand. Whatever happens, the user must never be shown JSON —
+  // an empty card is a bug, a card full of braces and key names is an embarrassment.
+  if (!text) {
+    const m = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) { try { text = JSON.parse('"' + m[1] + '"').trim(); } catch (e) { text = m[1].trim(); } }
+    if (!archetype) {
+      const a = raw.match(/"archetype"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (a) { try { archetype = JSON.parse('"' + a[1] + '"').trim(); } catch (e) { archetype = a[1].trim(); } }
+    }
+  }
+  // Still nothing structured: only accept the raw completion if it does not look like JSON.
+  if (!text && raw.indexOf("{") < 0) text = raw;
   if (!text) return Response.json({ error: "empty", text: "" });
 
   return Response.json({ archetype: archetype, text: text });

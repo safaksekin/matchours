@@ -178,6 +178,44 @@ async function upstream(path) {
   return directFetch(path);
 }
 
+// ── Last-good fallback (stale-if-error) ─────────────────────────────────────
+// api-sports enforce the per-minute limit per SOURCE IP as well as per key, and Workers egress
+// from a shared pool (see the relay note above) — so until the relay is deployed, any given minute
+// can 429 every call in it. A fresh answer used to live only for its own short TTL; once that
+// lapsed, one rate-limited minute answered []/502 to every user at once (measured 2026-08-19:
+// bydate for TODAY empty all afternoon while yesterday served from its settled cache — the app's
+// trending strip and fixture lists blank with the dashboard showing a near-idle key). Every
+// successful upstream answer is therefore ALSO kept as a long-TTL "last good" copy — at the edge
+// for this colo, and in Supabase for the fixture lists so a cold colo heals too — and a FINAL
+// upstream failure serves that copy instead of nothing. A stale minute on a score beats an empty
+// shelf; the short-TTL fresh path still wins whenever upstream actually answers.
+const STALE_TTL = 6 * 3600;
+const STALE_SB = /^\/fixtures\?date=/; // the lists that blank the whole app when they fail
+function staleReq(url) { return new Request(url + (url.indexOf("?") >= 0 ? "&" : "?") + "__stale=1", { method: "GET" }); }
+async function staleSet(url, path, edge, text, resp) {
+  try {
+    if (edge) await edge.put(staleReq(url), new Response(text, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + STALE_TTL } }));
+    else memSet(url + "#stale", resp, STALE_TTL);
+    if (STALE_SB.test(path)) await sbCacheSet(path + "#stale", resp, STALE_TTL);
+  } catch (e) { /* best-effort */ }
+}
+async function staleGet(url, path, edge) {
+  try {
+    if (edge) {
+      const hit = await edge.match(staleReq(url));
+      if (hit) { const j = JSON.parse(await hit.text()); return j && j.response ? j.response : null; }
+    } else {
+      const m = memGet(url + "#stale");
+      if (m !== undefined) return m;
+    }
+    if (STALE_SB.test(path)) {
+      const sb = await sbCacheGet(path + "#stale");
+      if (sb !== undefined && sb !== null && !(Array.isArray(sb) && !sb.length)) return sb;
+    }
+  } catch (e) { /* fall through */ }
+  return null;
+}
+
 async function apiGet(path, revalidate, _retried) {
   const url = HOST + path;
   // retries re-enter apiGet with the same url — they must not coalesce with themselves
@@ -205,7 +243,11 @@ async function apiGetRaw(path, revalidate, _retried) {
     // L2: Supabase (persistent) — only on L1 miss, only for immutable data
     if (persist) {
       const sb = await sbCacheGet(path);
-      if (sb !== undefined && sb !== null) {
+      // An empty array persisted here predates the empty-answer rule below (a match opened in the
+      // minutes after FT, before upstream had its stats, sealed `[]` for 30 days). Treat those rows
+      // as a miss so they heal by refetching, instead of poisoning every colo until they expire.
+      const sbEmpty = Array.isArray(sb) && sb.length === 0;
+      if (sb !== undefined && sb !== null && !sbEmpty) {
         // warm L1 so repeat reads in this colo/instance skip Supabase too
         if (edge) { try { await edge.put(key, new Response(JSON.stringify({ response: sb }), { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl } })); } catch (e) {} }
         else memSet(url, sb, ttl);
@@ -221,31 +263,40 @@ async function apiGetRaw(path, revalidate, _retried) {
     const n = _retried | 0;
     if (!res.ok) {
       if (n < 2 && (res.status === 429 || res.status >= 500)) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
-      return null;
+      return staleGet(url, path, edge); // retries exhausted — the last good copy beats nothing
     }
     const text = await res.text();
     let j;
-    try { j = JSON.parse(text); } catch (e) { return null; }
+    try { j = JSON.parse(text); } catch (e) { return staleGet(url, path, edge); }
     const errs = j && j.errors;
     const hasErr = errs && (Array.isArray(errs) ? errs.length > 0 : Object.keys(errs).length > 0);
     if (hasErr) {
       // api-sports reports the per-second/minute limit as a 200 with `errors`, so it lands here
       if (n < 2) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
-      return null;
+      return staleGet(url, path, edge); // retries exhausted — the last good copy beats nothing
     }
     const resp = (j && j.response) ? j.response : null;
     if (resp) {
+      // An empty array is a real answer but NOT an immutable one: a finished match's stats land
+      // upstream a few minutes AFTER full time, so `[]` fetched in that window and cached for the
+      // caller's ttl (30 DAYS on the finished path) pinned "no stats" into this colo — and, via the
+      // persist branch, into Supabase for every colo — long after the data existed. The detail
+      // route's `partial` flag never covered this layer. Empty answers are therefore held briefly
+      // (retry soon) and never persisted; a non-empty answer keeps the full ttl as before.
+      const empty = Array.isArray(resp) && resp.length === 0;
+      const storeTtl = empty ? Math.min(ttl, 120) : ttl;
       if (edge) {
         await edge.put(key, new Response(text, {
-          headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + ttl },
+          headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + storeTtl },
         }));
       } else {
-        memSet(url, resp, ttl); // dev / no-edge: remember in RAM so refreshes don't re-hit the API
+        memSet(url, resp, storeTtl); // dev / no-edge: remember in RAM so refreshes don't re-hit the API
       }
-      if (persist) await sbCacheSet(path, resp, ttl); // immutable data -> persist across colos + dev restarts
+      if (persist && !empty) await sbCacheSet(path, resp, ttl); // immutable data -> persist across colos + dev restarts
+      if (!empty) await staleSet(url, path, edge, text, resp); // last-good copy for rate-limited minutes
     }
     return resp;
-  } catch (e) { return null; }
+  } catch (e) { return staleGet(url, path, edge); }
 }
 
 // ── Our own search index (Supabase) ────────────────────────────────────────
@@ -1935,6 +1986,70 @@ async function handle(request) {
   }
 
   // ── Detail: lineups + statistics + events timeline + injuries + season stats ──
+  // ── Prewarm (cron): today's + yesterday's FINISHED priority-league fixtures into the L2 ────────
+  // A finished match's first opener paid the whole cold assembly (~5s measured): five upstream
+  // round-trips, each racing the shared-IP rate limit. But those five answers are immutable and
+  // Supabase-persisted, so ONE warm-through makes every later first-open — in every colo — an L2
+  // read instead. The cron calls this every few minutes; markers in api_cache stop it re-warming,
+  // and a match whose stats have not landed upstream yet is left unmarked so the next run retries.
+  // Only the LONG-TTL sub-calls are warmed, deliberately: the assembled detail response caches
+  // per-colo and the cron does not run in the users' colo, so warming it here would warm nothing.
+  // Guarded by the worker's shared secret (same one fan-analysis uses) — an open warm endpoint is
+  // an invitation to spend our upstream quota.
+  if (mode === "prewarm") {
+    const secret = process.env.FAN_ANALYSIS_SECRET || "";
+    const given = request.headers.get("x-warm-secret") || searchParams.get("key") || "";
+    if (!secret || given !== secret) return jsonNoStore({ error: "forbidden" }, 403);
+    // batch cap: fixtures warmed per invocation. Each cold fixture is ~15 subrequests, so the cap
+    // keeps one run comfortably inside Workers' per-invocation subrequest budget; the marker system
+    // means whatever a run doesn't reach, the next one picks up.
+    const limit = clampInt(searchParams.get("limit"), 1, 40) || 8;
+    const dayList = [];
+    for (let off = 0; off >= -1; off--) {
+      const d = new Date();
+      d.setDate(d.getDate() + off);
+      dayList.push(d.toISOString().split("T")[0]);
+    }
+    const lists = await Promise.all(dayList.map((k) => apiGet("/fixtures?date=" + k, 900).catch(() => [])));
+    const candidates = [];
+    lists.forEach((l) => (l || []).forEach((item) => {
+      const m = mapFixture(item, null);
+      if (m.status === "finished" && PRIORITY_RANK[m.leagueId] != null) candidates.push(m);
+    }));
+    // one batched marker read, not one sbCacheGet per fixture
+    const done = {};
+    if (SB_ON && candidates.length) {
+      try {
+        const q = candidates.map((m) => '"warm:' + m.id + '"').join(",");
+        const r = await fetch(SB_URL + "/rest/v1/api_cache?select=key,expires_at&key=in." + encodeURIComponent("(" + q + ")"), { headers: sbHdr() });
+        if (r.ok) {
+          (await r.json()).forEach((row) => {
+            if (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()) done[row.key] = 1;
+          });
+        }
+      } catch (e) {}
+    }
+    const batch = candidates.filter((m) => !done["warm:" + m.id]).slice(0, limit);
+    const warmed = [];
+    // fixtures SEQUENTIALLY, the five reads of one fixture in parallel — the same wave shape the
+    // detail route uses, sized to stay under the upstream's 7 req/s
+    for (const m of batch) {
+      const fid = m.id;
+      const [lu, st] = await Promise.all([
+        apiGet("/fixtures/lineups?fixture=" + fid, 2592000),
+        apiGet("/fixtures/statistics?fixture=" + fid, 2592000),
+        apiGet("/fixtures/events?fixture=" + fid, 2592000),
+        apiGet("/fixtures/players?fixture=" + fid, 2592000),
+        apiGet("/fixtures?id=" + fid, 2592000),
+      ]);
+      if ((lu && lu.length) || (st && st.length)) {
+        await sbCacheSet("warm:" + fid, 1, 3 * 86400);
+        warmed.push(fid);
+      }
+    }
+    return jsonNoStore({ candidates: candidates.length, alreadyWarm: Object.keys(done).length, tried: batch.length, warmed: warmed });
+  }
+
   if (mode === "detail") {
     const fixtureId = searchParams.get("match");
     const leagueId = searchParams.get("league");
@@ -1953,12 +2068,23 @@ async function handle(request) {
     // one. Same quota, one-fifth the wait; this endpoint is the app's most-opened screen.
     // fxData = fixture head (live minute + running score + status) — cached at the same T, so a
     // LIVE match's detail keeps ticking (30s) instead of relying on the 5-min list feed.
-    const [lineupData, statsData, eventsData, playersData, fxData] = await Promise.all([
+    // The pre-match extras (injuries + the two season-average reads) used to wait for this batch
+    // and then run one AFTER another — three serial round-trips appended to the cold path of
+    // exactly the matches that need them, since only a match WITHOUT stats shows them and an
+    // upcoming match never has stats. `status` already says which case this is, so they join the
+    // same wave here; if status turns out stale (stats arrived anyway) the three answers are
+    // simply discarded below, and a live/finished match that surprisingly lacks stats still gets
+    // them via the old sequential fallback — the answer is never different, only sooner.
+    const expectPrematch = !finished && status !== "live";
+    const [lineupData, statsData, eventsData, playersData, fxData, preInjuries, preHomeSeason, preAwaySeason] = await Promise.all([
       apiGet("/fixtures/lineups?fixture=" + fixtureId, T),
       apiGet("/fixtures/statistics?fixture=" + fixtureId, T),
       apiGet("/fixtures/events?fixture=" + fixtureId, T),
       apiGet("/fixtures/players?fixture=" + fixtureId, T),
       apiGet("/fixtures?id=" + fixtureId, T),
+      expectPrematch ? apiGet("/injuries?fixture=" + fixtureId, 300) : null,
+      expectPrematch ? teamSeason(homeTeam) : null,
+      expectPrematch ? teamSeason(awayTeam) : null,
     ]);
     const fx = fxData && fxData[0];
     const live = fx ? {
@@ -1970,7 +2096,7 @@ async function handle(request) {
     } : null;
     const hasMatchStats = !!(statsData && statsData.length);
     // injuries + season averages are only shown before kickoff -> skip them once the match has stats
-    const injuryData = hasMatchStats ? null : await apiGet("/injuries?fixture=" + fixtureId, 300);
+    const injuryData = hasMatchStats ? null : (expectPrematch ? preInjuries : await apiGet("/injuries?fixture=" + fixtureId, 300));
 
     function sideLineup(entry) {
       if (!entry) return { formation: null, starting: [], bench: [], coach: null, teamId: null, color: null };
@@ -2108,8 +2234,8 @@ async function handle(request) {
         loses: d.fixtures && d.fixtures.loses && d.fixtures.loses.total,
       };
     }
-    const homeSeason = hasMatchStats ? null : await teamSeason(homeTeam);
-    const awaySeason = hasMatchStats ? null : await teamSeason(awayTeam);
+    const homeSeason = hasMatchStats ? null : (expectPrematch ? preHomeSeason : await teamSeason(homeTeam));
+    const awaySeason = hasMatchStats ? null : (expectPrematch ? preAwaySeason : await teamSeason(awayTeam));
 
     // per-player match stats (Sofascore-style). One side = one /fixtures/players entry.
     function mapPlayers(entry, side) {
