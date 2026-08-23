@@ -1825,19 +1825,47 @@ async function handle(request) {
   if (mode === "weather") {
     const city = searchParams.get("city");
     if (!city || city === "—") return Response.json({ weather: null });
+    // Optional kickoff timestamp (ms). With it, the answer is the HOURLY forecast for the kickoff
+    // hour (Open-Meteo forecasts 16 days ahead) — the Match Briefing wants the weather the fan will
+    // stand in, not the weather right now. Out of range or absent → the current conditions, flagged.
+    const tsRaw = parseInt(searchParams.get("ts") || "", 10);
+    const ts = Number.isFinite(tsRaw) ? tsRaw : null;
     try {
       const geo = await fetch("https://geocoding-api.open-meteo.com/v1/search?name=" +
         encodeURIComponent(city) + "&count=1", { next: { revalidate: 86400 } });
       const gj = await geo.json();
       if (!gj.results || !gj.results[0]) return Response.json({ weather: null });
       const lat = gj.results[0].latitude, lon = gj.results[0].longitude;
+      const horizon = ts != null ? (ts - Date.now()) / 36e5 : null; // hours until kickoff
+      const wantsForecast = horizon != null && horizon > -3 && horizon < 16 * 24;
       const wx = await fetch("https://api.open-meteo.com/v1/forecast?latitude=" + lat +
-        "&longitude=" + lon + "&current=temperature_2m,weather_code", { next: { revalidate: 1800 } });
+        "&longitude=" + lon + "&current=temperature_2m,weather_code&timezone=UTC" +
+        (wantsForecast ? "&hourly=temperature_2m,weather_code,precipitation_probability&forecast_days=16" : ""),
+        { next: { revalidate: 1800 } });
       const wj = await wx.json();
+      if (wantsForecast && wj.hourly && wj.hourly.time && wj.hourly.time.length) {
+        // nearest hour slot to kickoff (hourly.time is ISO without offset, UTC as requested)
+        let best = -1, bestD = Infinity;
+        for (let i = 0; i < wj.hourly.time.length; i++) {
+          const d = Math.abs(Date.parse(wj.hourly.time[i] + "Z") - ts);
+          if (d < bestD) { bestD = d; best = i; }
+        }
+        if (best >= 0 && bestD < 2 * 36e5 && wj.hourly.temperature_2m[best] != null) {
+          const pop = wj.hourly.precipitation_probability ? wj.hourly.precipitation_probability[best] : null;
+          return Response.json({ weather: {
+            temp: Math.round(wj.hourly.temperature_2m[best]),
+            code: wj.hourly.weather_code[best],
+            pop: pop != null ? Math.round(pop) : null,
+            at: "kickoff",
+          }});
+        }
+      }
       if (!wj.current) return Response.json({ weather: null });
       return Response.json({ weather: {
         temp: Math.round(wj.current.temperature_2m),
         code: wj.current.weather_code,
+        pop: null,
+        at: "now",
       }});
     } catch (e) {
       return Response.json({ weather: null });
