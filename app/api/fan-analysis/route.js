@@ -70,10 +70,25 @@ function buildContext(b) {
   line(L, "Watched AT the stadium", b.attendedCount);
   line(L, "Distinct grounds visited", b.stadiumCount);
   line(L, "Cities", b.cityCount);
-  line(L, "Average rating (out of 5)", b.avgRating);
+  line(L, "Average rating (out of 10)", b.avgRating);
   line(L, "Average over the last 5 matches", b.recentAvg);
   if (Array.isArray(b.topTags) && b.topTags.length) L.push("Dominant mood tags: " + b.topTags.slice(0, 5).join(", "));
   if (b.favTeam) line(L, "Most-logged team", b.favTeam + (b.favTeamCount ? " (" + b.favTeamCount + " matches)" : ""));
+  // "Senin Maçların" (their-matches) numbers — the talisman line is the emotional centrepiece:
+  // it is THEIR presence changing THEIR club's fortunes, which is exactly the kind of detail the
+  // system prompt asks the model to anchor on instead of reciting averages.
+  if (b.club && b.talisman) {
+    const t = b.talisman;
+    const rec = t.w + "W " + t.d + "D " + t.l + "L over " + t.n + " matches";
+    if (t.mode === "stadium") L.push("Talisman: when this fan is IN THE STANDS, " + b.club + " win " + t.pct + "% (" + rec + ")");
+    else L.push("Talisman: " + b.club + " win " + t.pct + "% of the matches this fan watches (" + rec + ")");
+  }
+  line(L, "Their average rating AT the stadium (out of 10)", b.ratingStadium);
+  line(L, "Their average rating on a screen (out of 10)", b.ratingTv);
+  line(L, "Goals per logged match", b.goalsPerMatch);
+  line(L, "Total goals witnessed", b.goalsTotal);
+  line(L, "Goalless matches sat through", b.goalless);
+  if (b.bestLeague && b.bestLeague.name) line(L, "League they rate highest", b.bestLeague.name + " (" + b.bestLeague.avg + " avg)");
   if (b.bestMatch) line(L, "Highest-rated match", b.bestMatch);
   if (b.worstMatch) line(L, "Lowest-rated match", b.worstMatch);
   line(L, "Night matches share", b.nightPct != null ? b.nightPct + "%" : null);

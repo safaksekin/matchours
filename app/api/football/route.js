@@ -216,6 +216,35 @@ async function staleGet(url, path, edge) {
   return null;
 }
 
+// API-Sports serves a PLACEHOLDER picture for a venue it has no photo of — a grey shield (12,934 B)
+// or an "image not available" camera (29,416 B) — at the very same /venues/{id}.png URL a real photo
+// would have, so a client cannot tell them apart without downloading the file. A HEAD here can: the
+// two byte sizes are the tell. One HEAD per URL, globally, cached at the edge for 30 days (a real
+// venue photo does not change). A failed HEAD KEEPS the image — losing a real photo to a hiccup is
+// the worse error; the app draws a brand gradient in place of a null, never a stand-in.
+const VENUE_PLACEHOLDER_SIZES = new Set([12934, 29416]);
+async function realVenueImage(url) {
+  if (!url) return null;
+  const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
+  const key = edge ? new Request(url + (url.indexOf("?") >= 0 ? "&" : "?") + "__head=1", { method: "GET" }) : null;
+  try {
+    if (edge) {
+      const hit = await edge.match(key);
+      if (hit) return (await hit.text()) === "ok" ? url : null;
+    } else {
+      const m = memGet(url + "#head");
+      if (m !== undefined) return m ? url : null;
+    }
+    const r = await fetch(url, { method: "HEAD" });
+    if (!r.ok) return null; // 404 etc: there is no picture at this URL
+    const len = parseInt(r.headers.get("content-length") || "0", 10);
+    const ok = !VENUE_PLACEHOLDER_SIZES.has(len);
+    if (edge) { try { await edge.put(key, new Response(ok ? "ok" : "placeholder", { headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=2592000" } })); } catch (e) {} }
+    else memSet(url + "#head", ok, 2592000);
+    return ok ? url : null;
+  } catch (e) { return url; }
+}
+
 async function apiGet(path, revalidate, _retried) {
   const url = HOST + path;
   // retries re-enter apiGet with the same url — they must not coalesce with themselves
@@ -1352,6 +1381,8 @@ async function handle(request) {
     }
     // the &next= shapes fail from shared worker egress (see nextFixtureByScan) — the day feeds don't
     if (!item) item = await nextFixtureByScan(teamId, venueId);
+    // a placeholder picture is "no picture" — the app falls back to Commons / its gradient from null
+    image = await realVenueImage(image);
 
     return Response.json({
       venueId: venueId,
