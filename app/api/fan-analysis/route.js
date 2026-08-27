@@ -38,7 +38,18 @@ function systemFor(lang) {
     "TWO specific details from the data (a ground count, a team that keeps appearing, a harsh average, " +
     "a rainy away day). NEVER recite the stats as a list, never say 'your data shows', never invent " +
     "facts not present in the data. No greeting, no title inside text, no emoji, no bullet points. " +
-    "Vary the opening — do not start with 'You are'."
+    "Vary the opening — do not start with 'You are'.\n" +
+    // The language contract, stated LAST because that is where it holds best, and stated as a rule
+    // about the DATA BLOCK rather than a repeat of "write in L". The block below is always English
+    // — it is evidence, not copy — and the failure this fixes was the model lifting words straight
+    // out of it into a card meant for another language. The one carve-out is proper nouns: a club,
+    // ground, city, league or competition keeps the name it actually has.
+    "The diary data below is written in English for you to READ; it is evidence, never wording. " +
+    "Write EVERY word of both fields in " + L + ". Do not copy any word or phrase out of the data " +
+    "block. The only strings that may appear in their original form are proper nouns — club, " +
+    "stadium, city, league and competition names, and the scorelines attached to them. The 'style' " +
+    "line describes the kinds of match this person is drawn to: convey what it MEANS in " + L + ", " +
+    "never as a translated list and never in English."
   );
 }
 
@@ -72,7 +83,13 @@ function buildContext(b) {
   line(L, "Cities", b.cityCount);
   line(L, "Average rating (out of 10)", b.avgRating);
   line(L, "Average over the last 5 matches", b.recentAvg);
-  if (Array.isArray(b.topTags) && b.topTags.length) L.push("Dominant mood tags: " + b.topTags.slice(0, 5).join(", "));
+  // Descriptions, not ids: the Edge Function maps its internal tag slugs (which are Turkish words)
+  // to English descriptions before they ever reach this route — see TAG_TEXT there. Anything that
+  // still looks like a bare slug is dropped rather than shown to the model.
+  if (Array.isArray(b.topTags) && b.topTags.length) {
+    const styles = b.topTags.filter(function (x) { return typeof x === "string" && /\s/.test(x); }).slice(0, 5);
+    if (styles.length) L.push("The football they are drawn to, strongest first: " + styles.join("; "));
+  }
   if (b.favTeam) line(L, "Most-logged team", b.favTeam + (b.favTeamCount ? " (" + b.favTeamCount + " matches)" : ""));
   // "Senin Maçların" (their-matches) numbers — the talisman line is the emotional centrepiece:
   // it is THEIR presence changing THEIR club's fortunes, which is exactly the kind of detail the
