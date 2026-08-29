@@ -2291,7 +2291,54 @@ async function handle(request) {
         wins: d.fixtures && d.fixtures.wins && d.fixtures.wins.total,
         draws: d.fixtures && d.fixtures.draws && d.fixtures.draws.total,
         loses: d.fixtures && d.fixtures.loses && d.fixtures.loses.total,
+        // ── Match Briefing depth (app, 29 Aug) — all from the same /teams/statistics answer ──
+        // home/away splits: the home side's record AT HOME and the visitor's ON THE ROAD are what
+        // a fan in the stands is actually walking into, not the blended season line
+        homeRec: rec(d, "home"),
+        awayRec: rec(d, "away"),
+        gfAvgHome: avg(d, "for", "home"), gaAvgHome: avg(d, "against", "home"),
+        gfAvgAway: avg(d, "for", "away"), gaAvgAway: avg(d, "against", "away"),
+        // share of goals scored / conceded after the 75th minute ("stay to the end")
+        latePctFor: minutePct(d, "for"), latePctAgainst: minutePct(d, "against"),
+        formAll: d.form ? d.form.slice(-10).split("") : [],
+        formation: topFormation(d),
+        yellowAvg: yellowAvg(d, played),
       };
+    }
+    function rec(d, side) {
+      const f = d.fixtures || {};
+      const g = function (k) { return f[k] && f[k][side] != null ? f[k][side] : null; };
+      if (g("played") == null) return null;
+      return { played: g("played"), win: g("wins"), draw: g("draws"), lose: g("loses") };
+    }
+    function avg(d, dir, side) {
+      const v = d.goals && d.goals[dir] && d.goals[dir].average && d.goals[dir].average[side];
+      return v != null && v !== "" ? Number(v) : null;
+    }
+    function minutePct(d, dir) {
+      const m = d.goals && d.goals[dir] && d.goals[dir].minute;
+      if (!m) return null;
+      var late = 0, all = 0;
+      Object.keys(m).forEach(function (k) {
+        const t = m[k] && m[k].total;
+        if (t == null) return;
+        all += t;
+        if (k === "76-90" || k === "91-105" || k === "106-120") late += t;
+      });
+      return all >= 5 ? Math.round((late / all) * 100) : null; // too few goals = no signal
+    }
+    function topFormation(d) {
+      const l = d.lineups || [];
+      var best = null;
+      l.forEach(function (x) { if (x && x.formation && (!best || (x.played || 0) > (best.played || 0))) best = x; });
+      return best ? best.formation : null;
+    }
+    function yellowAvg(d, played) {
+      const y = d.cards && d.cards.yellow;
+      if (!y || !played) return null;
+      var n = 0;
+      Object.keys(y).forEach(function (k) { n += (y[k] && y[k].total) || 0; });
+      return Math.round((n / played) * 10) / 10;
     }
     const homeSeason = hasMatchStats ? null : (expectPrematch ? preHomeSeason : await teamSeason(homeTeam));
     const awaySeason = hasMatchStats ? null : (expectPrematch ? preAwaySeason : await teamSeason(awayTeam));
@@ -2398,6 +2445,9 @@ async function handle(request) {
         subs: subs,
         colors: { home: homeLU.color, away: awayLU.color },
         timeline: timeline,
+        // the ground, for matches the app opens without a list row behind them (a feed log, a search hit)
+        venue: (fx && fx.fixture && fx.fixture.venue && fx.fixture.venue.name) || null,
+        city: (fx && fx.fixture && fx.fixture.venue && fx.fixture.venue.city) || null,
         injuries: injuries,
         season: { home: homeSeason, away: awaySeason },
         playerStats: { home: homePlayers, away: awayPlayers },
