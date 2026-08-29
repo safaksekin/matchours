@@ -2160,11 +2160,20 @@ async function handle(request) {
     // simply discarded below, and a live/finished match that surprisingly lacks stats still gets
     // them via the old sequential fallback — the answer is never different, only sooner.
     const expectPrematch = !finished && status !== "live";
+    // QUOTA (29 Aug): more than an hour before kickoff the four match feeds (lineups, statistics,
+    // events, players) are empty by definition — official XIs arrive ~60 min out, everything else at
+    // kickoff — and an empty answer is held only 120 s, so every re-open of a popular fixture paid
+    // four upstream calls for four "[]"s. The app sends the kickoff (`ts`); this far out those four
+    // are answered locally. The Match Briefing is untouched: it reads the fixture head, injuries
+    // and the season blocks, all still fetched.
+    const ts = parseInt(searchParams.get("ts") || "0", 10);
+    const farOut = expectPrematch && ts > 0 && ts - Date.now() > 60 * 60 * 1000;
+    const skip = () => Promise.resolve([]);
     const [lineupData, statsData, eventsData, playersData, fxData, preInjuries, preHomeSeason, preAwaySeason] = await Promise.all([
-      apiGet("/fixtures/lineups?fixture=" + fixtureId, T),
-      apiGet("/fixtures/statistics?fixture=" + fixtureId, T),
-      apiGet("/fixtures/events?fixture=" + fixtureId, T),
-      apiGet("/fixtures/players?fixture=" + fixtureId, T),
+      farOut ? skip() : apiGet("/fixtures/lineups?fixture=" + fixtureId, T),
+      farOut ? skip() : apiGet("/fixtures/statistics?fixture=" + fixtureId, T),
+      farOut ? skip() : apiGet("/fixtures/events?fixture=" + fixtureId, T),
+      farOut ? skip() : apiGet("/fixtures/players?fixture=" + fixtureId, T),
       apiGet("/fixtures?id=" + fixtureId, T),
       expectPrematch ? apiGet("/injuries?fixture=" + fixtureId, 300) : null,
       expectPrematch ? teamSeason(homeTeam) : null,
