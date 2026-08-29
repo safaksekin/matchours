@@ -1144,6 +1144,31 @@ async function handle(request) {
   }
 
   // ── Fixture crests + score by fixture id (backfill logos/score onto older logs) ──
+  // ── Status: the REAL state of up to 20 fixtures by id (upcoming / live / finished / postponed) ──
+  // For the app's lists (Listem, trip lists, open check-ins): "played" is what the API says, not
+  // kickoff + a guessed duration. One upstream call per 20 ids, 60 s at the edge — a full-time
+  // whistle shows within a minute.
+  if (mode === "status") {
+    const ids = (searchParams.get("ids") || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 20);
+    if (!ids.length) return Response.json({ status: {} });
+    const data = await apiGet("/fixtures?ids=" + ids.join("-"), 60);
+    if (data === null) return jsonNoStore({ status: null, error: "upstream" }, 502);
+    const out = {};
+    (data || []).forEach(function (f) {
+      if (!f.fixture) return;
+      const short = f.fixture.status && f.fixture.status.short;
+      const hg = f.goals ? f.goals.home : null, ag = f.goals ? f.goals.away : null;
+      out[String(f.fixture.id)] = {
+        status: statusOf(short),
+        statusShort: short || null,
+        score: (hg != null && ag != null) ? (hg + " - " + ag) : null,
+        minute: (f.fixture.status && f.fixture.status.elapsed) || null,
+        ts: f.fixture.date ? new Date(f.fixture.date).getTime() : null,
+      };
+    });
+    return jsonCached({ status: out }, 60, 120);
+  }
+
   if (mode === "fixturemeta") {
     const idsParam = searchParams.get("ids") || "";
     const ids = idsParam.split(",").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 20);
