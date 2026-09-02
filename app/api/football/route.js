@@ -168,11 +168,14 @@ const inflight = new Map(); // url -> Promise<response|null>
 // A relay that is down, unreachable or misconfigured falls back to the direct call rather than
 // taking the app with it — the box is an optimisation, never a dependency.
 const RELAY_URL = (process.env.RELAY_URL || "").replace(/\/+$/, "");
-function directFetch(path) { return fetch(HOST + path, { headers: hdr() }); }
+// Every outbound call carries a deadline (2 Sep audit): a hung upstream used to pin the Worker
+// invocation until the platform killed it, and there was no timeout on any fetch in this file.
+function fetchT(url, init, ms) { return fetch(url, Object.assign({}, init || {}, { signal: AbortSignal.timeout(ms || 8000) })); }
+function directFetch(path) { return fetchT(HOST + path, { headers: hdr() }); }
 async function upstream(path) {
   if (!RELAY_URL) return directFetch(path);
   try {
-    const res = await fetch(RELAY_URL + path, { headers: { "x-relay-key": process.env.RELAY_SECRET || "" } });
+    const res = await fetchT(RELAY_URL + path, { headers: { "x-relay-key": process.env.RELAY_SECRET || "" } });
     if (res.ok) return res;
   } catch (e) { /* relay down → direct */ }
   return directFetch(path);
@@ -235,7 +238,7 @@ async function realVenueImage(url) {
       const m = memGet(url + "#head");
       if (m !== undefined) return m ? url : null;
     }
-    const r = await fetch(url, { method: "HEAD" });
+    const r = await fetchT(url, { method: "HEAD" }, 5000);
     if (!r.ok) return null; // 404 etc: there is no picture at this URL
     const len = parseInt(r.headers.get("content-length") || "0", 10);
     const ok = !VENUE_PLACEHOLDER_SIZES.has(len);
@@ -300,9 +303,12 @@ async function apiGetRaw(path, revalidate, _retried) {
     const errs = j && j.errors;
     const hasErr = errs && (Array.isArray(errs) ? errs.length > 0 : Object.keys(errs).length > 0);
     if (hasErr) {
-      // api-sports reports the per-second/minute limit as a 200 with `errors`, so it lands here
-      if (n < 2) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
-      return staleGet(url, path, edge); // retries exhausted — the last good copy beats nothing
+      // api-sports reports the per-second/minute limit as a 200 with `errors`, so it lands here.
+      // ONLY that is worth a retry: a parameter error ("id must be a number") was also retried
+      // twice with growing sleeps, so one bad request cost three upstream calls and 3.3 s (2 Sep).
+      const rateLimited = /rate ?limit|too many|per (minute|second|day)|request limit/i.test(JSON.stringify(errs));
+      if (rateLimited && n < 2) { await sleep(1100 * (n + 1)); return apiGet(path, revalidate, n + 1); }
+      return rateLimited ? staleGet(url, path, edge) : null; // limit: the last good copy beats nothing; bad request: nothing
     }
     const resp = (j && j.response) ? j.response : null;
     if (resp) {
@@ -618,11 +624,32 @@ export async function GET(request) {
   return res;
 }
 
+// Every mode this route answers. Anything else is refused before it can touch upstream (2 Sep
+// audit: the dispatcher fell through unknown modes into the default day feed).
+const MODES = new Set(["list", "assists", "bydate", "detail", "fixturemeta", "leaguefixtures", "leagues", "matchactual",
+  "nearby", "othersport", "player", "playergames", "predcandidates", "prewarm", "recent", "scorers", "search",
+  "standings", "standouts", "status", "team", "venue", "weather"]);
+// Ids and seasons are digits, dates are ISO days, free text is short. Anything else is answered
+// 400 here instead of being pasted raw into an api-sports URL — which both spent quota on garbage
+// and let a caller append arbitrary upstream parameters (2 Sep audit).
+const NUMERIC_PARAMS = ["match", "league", "season", "home", "away", "id", "teamId", "fixture", "player", "limit", "page"];
+const TEXT_PARAMS = { q: 80, name: 120, team: 120, round: 40, city: 80, sport: 20 };
+function badParams(searchParams) {
+  for (const k of NUMERIC_PARAMS) { const v = searchParams.get(k); if (v != null && v !== "" && !/^\d{1,12}$/.test(v)) return k; }
+  for (const k in TEXT_PARAMS) { const v = searchParams.get(k); if (v != null && v.length > TEXT_PARAMS[k]) return k; }
+  const ids = searchParams.get("ids"); if (ids && !/^[\d,\s-]{1,400}$/.test(ids)) return "ids";
+  const date = searchParams.get("date"); if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return "date";
+  return null;
+}
+
 async function handle(request) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("mode") || "list";
 
   if (!process.env.APISPORTS_KEY) return Response.json({ error: "no_key", matches: [] });
+  if (!MODES.has(mode)) return jsonNoStore({ error: "unknown_mode" }, 404);
+  const bad = badParams(searchParams);
+  if (bad) return jsonNoStore({ error: "bad_param", param: bad }, 400);
 
   // ── Other sports: match names only (basketball / volleyball / mma / nba) ──
   if (mode === "othersport") {
@@ -651,7 +678,7 @@ async function handle(request) {
       // games endpoints accept ?date=; mma fights we just take upcoming list
       const url = cfg.host + cfg.path + (sport === "mma" ? "?season=" + today.getFullYear() : "?date=" + dToday);
       // 45s so LIVE minutes/scores in the list (and the app's live-header fallback) stay fresh
-      const res = await fetch(url, { headers: hdr(), next: { revalidate: 45 } });
+      const res = await fetchT(url, { headers: hdr() });
       const j = await res.json();
       const resp = (j && j.response) ? j.response : [];
       const out = [];
@@ -1485,17 +1512,6 @@ async function handle(request) {
     });
   }
 
-  // ── Diagnostic: api-sports account plan + rate limits (temporary) ──
-  if (mode === "quota") {
-    try {
-      const res = await fetch(HOST + "/status", { headers: hdr() });
-      const j = await res.json();
-      const rl = {};
-      res.headers.forEach(function (v, k) { if (k.toLowerCase().indexOf("ratelimit") >= 0) rl[k] = v; });
-      return Response.json({ status: j.response || null, rateLimitHeaders: rl, errors: j.errors || null });
-    } catch (e) { return Response.json({ error: String(e) }); }
-  }
-
   // ── Matches on a specific date (date strip on the right column) ──
   if (mode === "bydate") {
     const sport = searchParams.get("sport") || "football";
@@ -1602,58 +1618,6 @@ async function handle(request) {
     });
     all.sort(function (a, b) { return b.rating - a.rating; });
     return Response.json({ players: all.slice(0, 3), date: chosen });
-  }
-
-  // ── Team of the round (best XI) for a league's current knockout round. ──
-  // Scoped for now to the World Cup Round of 32; move to "Round of 16" by changing the round param.
-  // Finished-match player ratings are immutable, so each fixture is cached long -> recompute is ~free.
-  if (mode === "totw") {
-    const league = searchParams.get("league") || "1";
-    const season = searchParams.get("season") || "2026";
-    const round = (searchParams.get("round") || "Round of 32").trim();
-    const rl = round.toLowerCase();
-    const fxAll = await apiGet("/fixtures?league=" + league + "&season=" + season, 3600);
-    const finished = (fxAll || []).filter(function (it) {
-      const r = (it.league && it.league.round) || "";
-      return r.toLowerCase().indexOf(rl) >= 0 && statusOf(it.fixture.status && it.fixture.status.short) === "finished";
-    });
-    if (!finished.length) return Response.json({ round: round, players: [], formation: null });
-    const byId = {};
-    for (const fx of finished) {
-      const pdata = await apiGet("/fixtures/players?fixture=" + fx.fixture.id, 604800); // immutable -> 7d
-      (pdata || []).forEach(function (entry) {
-        const tname = entry.team && entry.team.name;
-        const tlogo = entry.team && entry.team.logo;
-        (entry.players || []).forEach(function (pp) {
-          const p = pp.player || {};
-          const st = (pp.statistics && pp.statistics[0]) || {};
-          const g = st.games || {};
-          if (g.rating == null) return;
-          const rv = parseFloat(g.rating);
-          if (isNaN(rv)) return;
-          const prev = byId[p.id];
-          if (!prev || rv > prev.rating) {
-            byId[p.id] = {
-              id: p.id, name: p.name || "?",
-              photo: p.photo || (p.id ? "https://media.api-sports.io/football/players/" + p.id + ".png" : null),
-              team: tname || "", teamLogo: tlogo || null, rating: Math.round(rv * 100) / 100,
-              pos: (g.position || "M").charAt(0).toUpperCase(),
-            };
-          }
-        });
-      });
-    }
-    const pool = Object.keys(byId).map(function (k) { return byId[k]; });
-    pool.sort(function (a, b) { return b.rating - a.rating; });
-    // 4-3-3: 1 GK, 4 DEF, 3 MID, 3 FWD by position; fill any shortfall from the best remaining.
-    const bucket = { G: [], D: [], M: [], F: [] };
-    pool.forEach(function (p) { (bucket[p.pos] || bucket.M).push(p); });
-    const need = { G: 1, D: 4, M: 3, F: 3 }, used = {}, xi = [];
-    ["G", "D", "M", "F"].forEach(function (k) {
-      (bucket[k] || []).slice(0, need[k]).forEach(function (p) { xi.push(Object.assign({ slot: k }, p)); used[p.id] = 1; });
-    });
-    if (xi.length < 11) pool.forEach(function (p) { if (xi.length < 11 && !used[p.id]) { xi.push(Object.assign({ slot: p.pos }, p)); used[p.id] = 1; } });
-    return Response.json({ round: round, league: league, formation: "4-3-3", players: xi });
   }
 
   // ── Match actuals for scoring/comparison: 90' result, actual MOTM, actual player ratings ──
@@ -1887,14 +1851,14 @@ async function handle(request) {
     const tsRaw = parseInt(searchParams.get("ts") || "", 10);
     const ts = Number.isFinite(tsRaw) ? tsRaw : null;
     try {
-      const geo = await fetch("https://geocoding-api.open-meteo.com/v1/search?name=" +
+      const geo = await fetchT("https://geocoding-api.open-meteo.com/v1/search?name=" +
         encodeURIComponent(city) + "&count=1", { next: { revalidate: 86400 } });
       const gj = await geo.json();
       if (!gj.results || !gj.results[0]) return Response.json({ weather: null });
       const lat = gj.results[0].latitude, lon = gj.results[0].longitude;
       const horizon = ts != null ? (ts - Date.now()) / 36e5 : null; // hours until kickoff
       const wantsForecast = horizon != null && horizon > -3 && horizon < 16 * 24;
-      const wx = await fetch("https://api.open-meteo.com/v1/forecast?latitude=" + lat +
+      const wx = await fetchT("https://api.open-meteo.com/v1/forecast?latitude=" + lat +
         "&longitude=" + lon + "&current=temperature_2m,weather_code&timezone=UTC" +
         (wantsForecast ? "&hourly=temperature_2m,weather_code,precipitation_probability&forecast_days=16" : ""),
         { next: { revalidate: 1800 } });
@@ -2140,11 +2104,23 @@ async function handle(request) {
     const season = searchParams.get("season") || 2025;
     const homeTeam = searchParams.get("home");
     const awayTeam = searchParams.get("away");
-    const status = searchParams.get("status") || "";
+    const claimed = searchParams.get("status") || "";
+    const ts = parseInt(searchParams.get("ts") || "0", 10);
 
     // TTL by match state: a FINISHED match is immutable -> 30 days (persisted to Supabase,
     // so later opens = 0 API). LIVE -> 30s (slight delay is fine). UPCOMING -> 5 min.
-    const finished = status === "finished";
+    // The STATE COMES FROM UPSTREAM, not from the query (2 Sep audit): `status=finished` from the
+    // client used to set the 30-day tier directly, so one request — a stale app, or anyone with
+    // the URL — froze a running match's four feeds into the shared edge + Supabase cache for every
+    // user. The fixture head is read FIRST on a short TTL and its own status picks the tier. The
+    // claim only bounds the head's TTL upward: a claimed-finished match >3 h past kickoff holds an
+    // hour (one cheap head read per hour per colo instead of every 30 s); everything else 30 s.
+    const headTtl = claimed === "finished" && ts > 0 && Date.now() - ts > 3 * 3600 * 1000 ? 3600 : 30;
+    const fxData = await apiGet("/fixtures?id=" + fixtureId, headTtl);
+    const fxHead = fxData && fxData[0];
+    const real = fxHead && fxHead.fixture && fxHead.fixture.status ? statusOf(fxHead.fixture.status.short) : null;
+    const finished = real === "finished"; // unknown head → never the 30-day tier
+    const status = real || claimed;
     const T = finished ? 2592000 : (status === "live" ? 30 : 300);
     // The five upstream reads are independent of each other, so they go out TOGETHER. Awaited one
     // by one (how this used to read) the response time was the SUM of five api-sports round-trips —
@@ -2166,15 +2142,13 @@ async function handle(request) {
     // four upstream calls for four "[]"s. The app sends the kickoff (`ts`); this far out those four
     // are answered locally. The Match Briefing is untouched: it reads the fixture head, injuries
     // and the season blocks, all still fetched.
-    const ts = parseInt(searchParams.get("ts") || "0", 10);
     const farOut = expectPrematch && ts > 0 && ts - Date.now() > 60 * 60 * 1000;
     const skip = () => Promise.resolve([]);
-    const [lineupData, statsData, eventsData, playersData, fxData, preInjuries, preHomeSeason, preAwaySeason] = await Promise.all([
+    const [lineupData, statsData, eventsData, playersData, preInjuries, preHomeSeason, preAwaySeason] = await Promise.all([
       farOut ? skip() : apiGet("/fixtures/lineups?fixture=" + fixtureId, T),
       farOut ? skip() : apiGet("/fixtures/statistics?fixture=" + fixtureId, T),
       farOut ? skip() : apiGet("/fixtures/events?fixture=" + fixtureId, T),
       farOut ? skip() : apiGet("/fixtures/players?fixture=" + fixtureId, T),
-      apiGet("/fixtures?id=" + fixtureId, T),
       expectPrematch ? apiGet("/injuries?fixture=" + fixtureId, 300) : null,
       expectPrematch ? teamSeason(homeTeam) : null,
       expectPrematch ? teamSeason(awayTeam) : null,

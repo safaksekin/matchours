@@ -298,7 +298,7 @@ function NotificationsBell({ loggedIn, onOpenMatch, matches, t }) {
   useEffect(function () {
     if (!loggedIn) { setCoupons([]); return; }
     var cancelled = false;
-    fetch("/api/predict/score").catch(function () {}).finally(function () {
+    Promise.resolve().finally(function () { // the score sweep runs from the cron now (see cron-worker.js)
       fetchMyPredictions(40).then(function (r) { if (!cancelled) setCoupons((r.items || []).filter(function (x) { return x.scored; })); }).catch(function () {});
     });
     return function () { cancelled = true; };
@@ -475,7 +475,7 @@ function isoLocal(d) {
 const I18N = {
   tr: { _lang: "tr", tagline: "Tüm spor istatistikleri, tek ekranda.", email: "E-posta", password: "Şifre",
     login: "Giriş Yap", signInBtn: "Oturum Aç", menu: "Menü", loggingIn: "Giriş yapılıyor...", noAccount: "Hesabın yok mu?", signup: "Kayıt ol",
-    matches: "Maç", noMatches: "Bu kategoride maç bulunamadı.", noLiveMatches: "Şu an oynanan canlı maç yok.", loading: "Yükleniyor...", totwTitle: "Haftanın 11'i",
+    matches: "Maç", noMatches: "Bu kategoride maç bulunamadı.", noLiveMatches: "Şu an oynanan canlı maç yok.", loading: "Yükleniyor...",
     live: "CANLI", info: "Bilgi", grid: "Grid", tv: "Yayın", comments: "Yorumlar", commentDo: "Yorum yap",
     referee: "Hakem", stadium: "Stadyum", city: "Şehir", rank: "Lig Sırası",
     last5: "Son 5 Maç", draw: "Berabere", totalMatches: "karşılaşma", h2hLoad: "H2H yükle",
@@ -513,7 +513,7 @@ const I18N = {
     sports: { live: "Canlı", football: "Futbol", basketball: "Basketbol", motorsport: "Formula 1", tennis: "Tenis", volleyball: "Voleybol", esports: "Espor", mma: "MMA" } },
   en: { _lang: "en", tagline: "All sports stats, on one screen.", email: "Email", password: "Password",
     login: "Log In", signInBtn: "Sign In", menu: "Menu", loggingIn: "Logging in...", noAccount: "No account?", signup: "Sign up",
-    matches: "Matches", noMatches: "No matches in this category.", noLiveMatches: "No live matches right now.", loading: "Loading...", totwTitle: "Team of the Round",
+    matches: "Matches", noMatches: "No matches in this category.", noLiveMatches: "No live matches right now.", loading: "Loading...",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Broadcast", comments: "Comments", commentDo: "Comment",
     referee: "Referee", stadium: "Stadium", city: "City", rank: "League Rank",
     last5: "Last 5 Matches", draw: "Draw", totalMatches: "meetings", h2hLoad: "Load H2H",
@@ -551,7 +551,7 @@ const I18N = {
     sports: { live: "Live", football: "Football", basketball: "Basketball", motorsport: "Formula 1", tennis: "Tennis", volleyball: "Volleyball", esports: "Esports", mma: "MMA" } },
   de: { _lang: "de", tagline: "Alle Sportstatistiken auf einem Bildschirm.", email: "E-Mail", password: "Passwort",
     login: "Anmelden", signInBtn: "Anmelden", menu: "Menü", loggingIn: "Anmeldung...", noAccount: "Kein Konto?", signup: "Registrieren",
-    matches: "Spiele", noMatches: "Keine Spiele in dieser Kategorie.", noLiveMatches: "Derzeit keine Live-Spiele.", loading: "Laden...", totwTitle: "Team der Runde",
+    matches: "Spiele", noMatches: "Keine Spiele in dieser Kategorie.", noLiveMatches: "Derzeit keine Live-Spiele.", loading: "Laden...",
     live: "LIVE", info: "Info", grid: "Grid", tv: "Ubertragung", comments: "Kommentare", commentDo: "Kommentieren",
     referee: "Schiedsrichter", stadium: "Stadion", city: "Stadt", rank: "Tabellenplatz",
     last5: "Letzte 5 Spiele", draw: "Unentschieden", totalMatches: "Begegnungen", h2hLoad: "H2H laden",
@@ -2892,70 +2892,6 @@ function StandoutsBox({ players, t, onOpen }) {
 // Compact display name for tight chips: the last token of a full name.
 function lastName(n){ n = (n || "").trim(); if (!n) return ""; var parts = n.split(" "); return parts.length > 1 ? parts[parts.length - 1] : n; }
 
-// Which knockout round the "team of the round" is built from. Bump to "Round of 16" etc. as the WC advances.
-var WC_TOTW_ROUND = "Round of 32";
-
-// Team of the round: best XI (4-3-3) from every finished match of the WC's current knockout round.
-// Shown on a small pitch in the sidebar; hidden until the API returns an XI.
-function HaftaninTakimi({ season, t, onOpenPlayer }) {
-  var [data, setData] = useState(null);
-  useEffect(function(){
-    var cancelled = false;
-    fetch("/api/football?mode=totw&league=1&season=" + (season || 2026) + "&round=" + encodeURIComponent(WC_TOTW_ROUND))
-      .then(function(r){ return r.json(); })
-      .then(function(j){ if (!cancelled) setData(j || { players: [] }); })
-      .catch(function(){ if (!cancelled) setData({ players: [] }); });
-    return function(){ cancelled = true; };
-  }, [season]);
-  if (!data || !data.players || data.players.length === 0) return null;
-  var rows = [["F"], ["M"], ["D"], ["G"]].map(function(g){
-    return data.players.filter(function(p){ return p.slot === g[0]; });
-  });
-  function chip(p){
-    return <div key={p.id} onClick={function(){ if (onOpenPlayer && p.id != null) onOpenPlayer({ id: p.id, name: p.name, photo: p.photo }); }}
-      style={{ width: 58, textAlign: "center", cursor: onOpenPlayer ? "pointer" : "default", WebkitTapHighlightColor: "transparent" }}>
-      <div style={{ position: "relative", width: 42, height: 42, margin: "0 auto 3px" }}>
-        {p.photo
-          ? <img src={p.photo} alt="" style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.9)", background: "#0a5c30" }} />
-          : <span style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "inline-block", border: "2px solid rgba(255,255,255,0.9)" }} />}
-        <span style={{ position: "absolute", right: -4, bottom: -4, background: "#fff", color: "#0a5c30", fontSize: 9.5,
-          fontWeight: 800, borderRadius: 6, padding: "0 4px", lineHeight: "15px", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}>{p.rating != null ? p.rating.toFixed(1) : "-"}</span>
-      </div>
-      <div style={{ color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{lastName(p.name)}</div>
-    </div>;
-  }
-  return <div style={{ marginTop: 16, borderRadius: 22, overflow: "hidden", boxShadow: "0 2px 14px rgba(20,40,40,0.10)" }}>
-    <div style={{ padding: "13px 15px 10px", display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: "linear-gradient(160deg, #12833f, #0a5c30)" }}>
-      <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>{t.totwTitle}</span>
-      <span style={{ color: "rgba(255,255,255,0.82)", fontSize: 11, fontWeight: 700 }}>{data.round}</span>
-    </div>
-    <div style={{ position: "relative", padding: "16px 10px", minHeight: 372,
-      background: "repeating-linear-gradient(180deg, #0e7038 0 40px, #0c6a34 40px 80px)" }}>
-      {/* field markings */}
-      {(function(){ var ln = "rgba(255,255,255,0.24)"; var b = "2px solid " + ln;
-        return <div aria-hidden style={{ position: "absolute", top: 12, left: 12, right: 12, bottom: 12, border: b, borderRadius: 6, pointerEvents: "none" }}>
-          <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 2, marginTop: -1, background: ln }} />
-          <div style={{ position: "absolute", left: "50%", top: "50%", width: 76, height: 76, marginLeft: -38, marginTop: -38, border: b, borderRadius: "50%" }} />
-          <div style={{ position: "absolute", left: "50%", top: "50%", width: 5, height: 5, marginLeft: -2.5, marginTop: -2.5, background: ln, borderRadius: "50%" }} />
-          {/* top box (attacking third) */}
-          <div style={{ position: "absolute", left: "50%", top: 0, width: "48%", height: 58, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderBottom: b }} />
-          <div style={{ position: "absolute", left: "50%", top: 0, width: "26%", height: 26, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderBottom: b }} />
-          {/* bottom box (own third) */}
-          <div style={{ position: "absolute", left: "50%", bottom: 0, width: "48%", height: 58, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderTop: b }} />
-          <div style={{ position: "absolute", left: "50%", bottom: 0, width: "26%", height: 26, transform: "translateX(-50%)", borderLeft: b, borderRight: b, borderTop: b }} />
-        </div>;
-      })()}
-      {/* players spread across the pitch: rows top(F) -> bottom(G), evenly within each row */}
-      <div style={{ position: "relative", zIndex: 1, minHeight: 340, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        {rows.map(function(row, ri){ return <div key={ri} style={{ display: "flex", justifyContent: "space-evenly", alignItems: "center", gap: 4 }}>
-          {row.map(function(p){ return chip(p); })}
-        </div>; })}
-      </div>
-    </div>
-  </div>;
-}
-
 // ── The Match Log (the spine) ────────────────────────────────────────────────
 // Style tags = "the paint": each is a labelled vote nudging the Taste Graph.
 // vec: est = pragmatik(-1) ↔ estetik(+1); rol = işçi/defansif(-1) ↔ şovmen/hücum(+1).
@@ -4824,7 +4760,7 @@ function PredictionsPage({ onBack, t, loggedIn, onLogin, onOpenMatch }) {
     if (!loggedIn) return;
     getUserId().then(setUid).catch(function(){});
     // score any past-due unscored coupons first, then load mine
-    fetch("/api/predict/score").catch(function(){}).finally(function(){
+    Promise.resolve().finally(function(){ // the score sweep runs from the cron now (see cron-worker.js)
       fetchMyPredictions(60).then(function(r){ setMine(r || { items: [], points: 0, played: 0 }); }).catch(function(){ setMine({ items: [], points: 0, played: 0 }); });
     });
     fetchMyLogs(200).then(function(l){ setLoggedIds(new Set((l || []).map(function(x){ return String(x.match_id); }))); }).catch(function(){ setLoggedIds(new Set()); });
@@ -6740,7 +6676,6 @@ export default function Home({ initialSport, initialLeagueSlug }) {
                         t={t} onOpenMatch={function(m){ setSelectedMatch(m); }} onClear={clearLeague} />
                     : <div className="mo-sidebar">
                         <FeaturedCarousel matches={featured} isF1={isF1} t={t} onOpen={function(m){ setSelectedMatch(m); }} />
-                        {activeSport === "football" && <HaftaninTakimi season={wcSeason} t={t} onOpenPlayer={function(p){ setSelectedPlayer(p); }} />}
                         <StandoutsBox players={activeSport === "football" ? standouts : []} t={t}
                           onOpen={function(){ if (standouts.length) setShowStandouts(true); }} />
                         {!isF1 && lg.leagueId && <MajorStats leagueId={lg.leagueId} season={lg.season || 2025} t={t} />}

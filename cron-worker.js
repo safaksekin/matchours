@@ -33,5 +33,14 @@ export default {
         .then((t) => console.log("prewarm:", t.slice(0, 300)))
         .catch((e) => console.log("prewarm failed:", String(e)))
     );
+    // Prediction coupons: score the past-due ones. Used to run from every web page load (and so
+    // from anyone's shell); the route now takes the sweep only with the secret (2 Sep).
+    const sweep = new Request(SITE + "/api/predict/score", { headers: { "x-warm-secret": env.FAN_ANALYSIS_SECRET || "" } });
+    ctx.waitUntil(
+      handler.fetch(sweep, env, ctx)
+        .then((r) => r.text())
+        .then((t) => console.log("predict sweep:", t.slice(0, 200)))
+        .catch((e) => console.log("predict sweep failed:", String(e)))
+    );
   },
 };

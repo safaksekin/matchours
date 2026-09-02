@@ -85,8 +85,14 @@ function buildContext(b) {
 
 export async function POST(request) {
   let b;
-  try { b = await request.json(); } catch (e) { return Response.json({ error: "bad_request", text: "" }); }
-  const matchId = String(b.matchId || "");
+  // Bounded body + numeric id (2 Sep audit): this route is public and every field of the body is
+  // pasted into the prompt, so an unbounded body was an open Gemini bill.
+  try {
+    const raw = await request.text();
+    if (raw.length > 12000) return Response.json({ error: "too_large", text: "" }, { status: 413 });
+    b = JSON.parse(raw);
+  } catch (e) { return Response.json({ error: "bad_request", text: "" }); }
+  const matchId = /^\d{1,12}$/.test(String(b.matchId || "")) ? String(b.matchId) : "";
   const cacheKey = "preview:" + matchId;
 
   if (matchId) {
@@ -101,6 +107,7 @@ export async function POST(request) {
   async function callGemini() {
     const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent?key=" + KEY, {
       method: "POST",
+      signal: AbortSignal.timeout(20000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
@@ -123,7 +130,9 @@ export async function POST(request) {
   text = ((text && text.text) || "").trim();
   if (!text) return Response.json({ error: "empty", text: "" });
 
-  // upcoming previews are stable for a while; finished -> keep long
-  if (matchId) await cacheSet(cacheKey, { text: text }, b.status === "finished" ? 2592000 : 21600);
+  // Six hours, whatever the client says: `status` is client-supplied, and "finished" used to pin
+  // whatever text this request produced for 30 days in front of every later visitor (2 Sep audit).
+  // The full fix — build the context server-side from matchId — is post-beta work.
+  if (matchId) await cacheSet(cacheKey, { text: text }, 21600);
   return Response.json({ text: text });
 }

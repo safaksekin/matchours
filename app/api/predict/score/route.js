@@ -100,6 +100,15 @@ async function sweep() {
 async function run(request) {
   if (!READY) return Response.json({ error: "not_configured", scored: 0 });
   const match = new URL(request.url).searchParams.get("match");
+  if (match && !/^\d{1,12}$/.test(match)) return Response.json({ error: "bad_param", scored: 0 }, { status: 400 });
+  // The sweep (up to 50 Supabase reads + 100 uncached upstream calls) is the cron's job now —
+  // see cron-worker.js. Public callers may only score ONE named match (2 Sep audit: every web
+  // page load used to trigger a full sweep, and so could anyone else, for free).
+  if (!match) {
+    const secret = process.env.FAN_ANALYSIS_SECRET || "";
+    const given = request.headers.get("x-warm-secret") || "";
+    if (!secret || given !== secret) return Response.json({ error: "forbidden", scored: 0 }, { status: 403 });
+  }
   try {
     const scored = match ? await scoreMatch(match) : await sweep();
     return Response.json({ scored: scored });
