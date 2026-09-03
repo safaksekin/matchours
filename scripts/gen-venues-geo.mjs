@@ -123,6 +123,7 @@ const filtered = ONLY.length ? all.filter((c) => ONLY.includes(c.name.toLowerCas
 console.log('countries (' + filtered.length + '): ' + filtered.map((c) => c.name).join(', '));
 
 let added = 0, linked = 0, skipped = 0, misses = 0, done = 0;
+const nationalIds = new Set(); // team ids of national sides met this run — a club may take a ground over them
 for (const C of filtered) {
   const rows = await apiTeams(C.name);
   console.log(C.name + ': ' + rows.length + ' clubs');
@@ -133,9 +134,17 @@ for (const C of filtered) {
     const name = (v.name || '').trim();
     if (!teamId || !name || !v.id) continue;
 
+    // A NATIONAL side never claims a ground: the app resolves a ground's next match by this id, and
+    // Spain claiming the Bernabéu (Real Madrid arrived later → "dupe-skipped") left the ground
+    // answering with Spain's fixtures and the club with no ground at all. National rows only ever
+    // geocode a ground nobody else has; a club arriving later takes the id over (scripts/fix-venue-
+    // teams.mjs repairs the rows the earlier runs got wrong).
+    const national = !!(r.team && r.team.national);
+    const claim = (e) => { if (e[4] == null || (nationalIds.has(e[4]) && !national)) { e[4] = teamId; linked++; } else skipped++; };
+    if (national) nationalIds.add(teamId);
     // an entry already carrying this ground by name? just retrofit the teamId (v1 4-tuples)
     const known = byName.get(name.toLowerCase());
-    if (known) { if (known[4] == null) { known[4] = teamId; linked++; } else skipped++; continue; }
+    if (known) { claim(known); continue; }
 
     const key = 'v' + v.id;
     // A cached miss is retried, but not on every restart: the original run cached a null for any
@@ -166,8 +175,8 @@ for (const C of filtered) {
     if (!g || g.lat == null) { misses++; continue; } // null OR a {m:…} miss-stamp
     // same ground under a sponsor-renamed entry? retrofit that one instead of a duplicate pin
     const nearDupe = world.find((e) => kmBetween(e[1], e[2], g.lat, g.lng) < 0.25);
-    if (nearDupe) { if (nearDupe[4] == null) { nearDupe[4] = teamId; linked++; } else skipped++; continue; }
-    const entry = [name, Math.round(g.lat * 1e4) / 1e4, Math.round(g.lng * 1e4) / 1e4, g.cap || 0, teamId];
+    if (nearDupe) { claim(nearDupe); continue; }
+    const entry = [name, Math.round(g.lat * 1e4) / 1e4, Math.round(g.lng * 1e4) / 1e4, g.cap || 0, national ? null : teamId];
     world.push(entry);
     byName.set(name.toLowerCase(), entry);
     added++;
