@@ -226,24 +226,29 @@ async function staleGet(url, path, edge) {
 // venue photo does not change). A failed HEAD KEEPS the image — losing a real photo to a hiccup is
 // the worse error; the app draws a brand gradient in place of a null, never a stand-in.
 const VENUE_PLACEHOLDER_SIZES = new Set([12934, 29416]);
+// GET, not HEAD (4 Sep 2026): the HEAD probe let the 12,934-byte shield through — the app's
+// "log saved" card was showing it as the ground's picture. The bytes are the one tell that cannot
+// be dropped by a hop in between, and the file is small; the verdict is what gets cached (30 days),
+// so the download happens once per URL globally. Key bumped (__head=2) to shed the wrong verdicts.
 async function realVenueImage(url) {
   if (!url) return null;
   const edge = (typeof caches !== "undefined" && caches.default) ? caches.default : null;
-  const key = edge ? new Request(url + (url.indexOf("?") >= 0 ? "&" : "?") + "__head=1", { method: "GET" }) : null;
+  const key = edge ? new Request(url + (url.indexOf("?") >= 0 ? "&" : "?") + "__head=2", { method: "GET" }) : null;
   try {
     if (edge) {
       const hit = await edge.match(key);
       if (hit) return (await hit.text()) === "ok" ? url : null;
     } else {
-      const m = memGet(url + "#head");
+      const m = memGet(url + "#head2");
       if (m !== undefined) return m ? url : null;
     }
-    const r = await fetchT(url, { method: "HEAD" }, 5000);
+    const r = await fetchT(url, { method: "GET", cf: { cacheEverything: false } }, 6000);
     if (!r.ok) return null; // 404 etc: there is no picture at this URL
-    const len = parseInt(r.headers.get("content-length") || "0", 10);
+    const buf = await r.arrayBuffer();
+    const len = buf.byteLength || parseInt(r.headers.get("content-length") || "0", 10);
     const ok = !VENUE_PLACEHOLDER_SIZES.has(len);
     if (edge) { try { await edge.put(key, new Response(ok ? "ok" : "placeholder", { headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=2592000" } })); } catch (e) {} }
-    else memSet(url + "#head", ok, 2592000);
+    else memSet(url + "#head2", ok, 2592000);
     return ok ? url : null;
   } catch (e) { return url; }
 }
@@ -1419,20 +1424,23 @@ async function handle(request) {
       if (best) { venueId = best.v.id || null; image = best.v.image || null; }
     }
 
-    // 3) next fixture: PRIMARY the venue filter, FALLBACK the home team's next home game
+    // 3) next fixture: PRIMARY the venue filter, FALLBACK the home team's next home game.
+    //    `img=1` (the app's photo-only lookups — heroes, the log card) skips all of it: three
+    //    fixture calls and a day-feed scan for a caller that only reads `image`.
+    const imgOnly = searchParams.get("img") === "1";
     let item = null;
-    if (venueId) {
+    if (!imgOnly && venueId) {
       const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
       if (byVenue && byVenue.length) item = byVenue[0];
     }
-    if (!item && teamId) {
+    if (!imgOnly && !item && teamId) {
       const fx = await apiGet("/fixtures?team=" + teamId + "&next=10", 900);
       const homeGames = (fx || []).filter(function (f) { return f.teams && f.teams.home && String(f.teams.home.id) === String(teamId); });
       const atVenue = homeGames.filter(function (f) { return venueId && f.fixture && f.fixture.venue && String(f.fixture.venue.id) === String(venueId); });
       item = atVenue[0] || homeGames[0] || null;
     }
     // the &next= shapes fail from shared worker egress (see nextFixtureByScan) — the day feeds don't
-    if (!item) item = await nextFixtureByScan(teamId, venueId);
+    if (!imgOnly && !item) item = await nextFixtureByScan(teamId, venueId);
     // a placeholder picture is "no picture" — the app falls back to Commons / its gradient from null
     image = await realVenueImage(image);
 
