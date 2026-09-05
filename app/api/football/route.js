@@ -1442,7 +1442,20 @@ async function handle(request) {
     //    fixture calls and a day-feed scan for a caller that only reads `image`.
     const imgOnly = searchParams.get("img") === "1";
     let item = null;
-    if (!imgOnly && venueId) {
+    // 3a) LIVE FIRST (user, 5 Sep 2026): a match being played at this ground IS the ground's match.
+    //     The `&next=` lookups below only see not-started fixtures, so at kick-off the stadium page
+    //     and the map balloon used to flip from tonight's match to the one after it — while the
+    //     nearby feed (venueNextByTeamId) already put the live one first. Same shared 20 s feed
+    //     the list mode reads; matched by home team id, else by the venue id the API stamps on it.
+    if (!imgOnly && (teamId || venueId)) {
+      const live = await apiGet("/fixtures?live=all", 20);
+      item = (live || []).find(function (f) {
+        var home = f.teams && f.teams.home && f.teams.home.id;
+        var vid = f.fixture && f.fixture.venue && f.fixture.venue.id;
+        return (teamId && home != null && String(home) === String(teamId)) || (venueId && vid != null && String(vid) === String(venueId));
+      }) || null;
+    }
+    if (!imgOnly && !item && venueId) {
       const byVenue = await apiGet("/fixtures?venue=" + venueId + "&next=1", 900);
       if (byVenue && byVenue.length) item = byVenue[0];
     }
@@ -1457,19 +1470,21 @@ async function handle(request) {
     // a placeholder picture is "no picture" — the app falls back to Commons / its gradient from null
     image = await realVenueImage(image);
 
+    const fixture = item ? mapFixture(item, item.league && item.league.name) : null;
     return Response.json({
       venueId: venueId,
       image: image,
-      fixture: item ? mapFixture(item, item.league && item.league.name) : null,
+      fixture: fixture,
     }, {
       // The native app's Passport MAP popup fetches this from INSIDE a WebView (opaque origin) → needs CORS.
       // Short edge cache so repeat taps across users don't re-run the lookup. SWR 60, not 3600:
       // an answer cached during an upstream hiccup says "no upcoming match" at grounds that plainly
       // have one, and an hour of serve-stale kept that lie alive long after the edge could revalidate.
-      // An EMPTY answer is also cached briefly (60s) rather than for the full 15 minutes.
+      // An EMPTY answer is also cached briefly (60s) rather than for the full 15 minutes — and so is
+      // a LIVE one, whose score and minute would otherwise sit still for a quarter of an hour.
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, s-maxage=" + (item ? 900 : 60) + ", stale-while-revalidate=60",
+        "Cache-Control": "public, s-maxage=" + (fixture && fixture.status === "live" ? 60 : item ? 900 : 60) + ", stale-while-revalidate=60",
       },
     });
   }
