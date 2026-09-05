@@ -462,6 +462,19 @@ function jsonNoStore(body, status) {
   return Response.json(body, { status: status || 200, headers: { "Cache-Control": "no-store" } });
 }
 
+// Date strings the way the app expects them (Istanbul wall clock), from formatters built ONCE.
+// `Date.prototype.toLocale*String` constructs a new Intl.DateTimeFormat on every call, and on a
+// Saturday the list feed runs it three times for each of ~7000 fixtures: measured 508 ms of CPU
+// against 9 ms with the instances below. That difference is the whole reason the Worker was being
+// killed with "exceeded CPU time limit" (1102) on busy days — see the tail log of 5 Sep 2026.
+const FMT_TIME_TR = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+const FMT_DATE_TR = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" });
+const FMT_DATE_TR_Y = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Istanbul" });
+const FMT_DAY_KEY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Istanbul" });
+const fmtTime = function (d) { return FMT_TIME_TR.format(d); };
+const fmtDate = function (d) { return FMT_DATE_TR.format(d); };
+const fmtDayKey = function (d) { return FMT_DAY_KEY.format(d); };
+
 function mapFixture(item, leagueName) {
   const fx = item.fixture;
   const d = new Date(fx.date);
@@ -476,8 +489,8 @@ function mapFixture(item, leagueName) {
     away: item.teams.away.name,
     homeLogo: item.teams.home.logo,
     awayLogo: item.teams.away.logo,
-    time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }),
-    date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }),
+    time: fmtTime(d),
+    date: fmtDate(d),
     league: leagueName || (item.league && item.league.name) || "",
     leagueId: item.league && item.league.id,
     season: item.league && item.league.season,
@@ -486,7 +499,7 @@ function mapFixture(item, leagueName) {
     // the raw API short (1H/HT/2H/ET/BT/P/…): `status` collapses every in-play state to "live",
     // but the interval, extra time and a shootout each need their own clock label client-side
     statusShort: short || null,
-    dateKey: d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }), ts: d.getTime(),
+    dateKey: fmtDayKey(d), ts: d.getTime(),
     minute: (fx.status && fx.status.elapsed) || null,
     score: hasScore ? (goals.home + " - " + goals.away) : null,
     penScore: (function(){ var p = item.score && item.score.penalty; return (p && p.home != null && p.away != null) ? (p.home + " - " + p.away) : null; })(),
@@ -674,8 +687,8 @@ async function handle(request) {
     function fmt(dateStr) {
       const d = new Date(dateStr);
       return {
-        time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }),
-        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }),
+        time: fmtTime(d),
+        date: fmtDate(d),
       };
     }
 
@@ -1510,7 +1523,7 @@ async function handle(request) {
     // A TODAY fixture is about to change state (kickoff → live → FT), and an answer cached in the
     // kickoff race window says "next league match" while the real one is being played at the ground —
     // so match day gets the live-grade TTL too, not just matches already in play.
-    const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
+    const todayKey = fmtDayKey(new Date());
     const hasToday = items.some(function (it) { return it.fixture && it.fixture.dateKey === todayKey; });
     const maxAge = !full || hasLive || hasToday ? 30 : 900;
     // SWR 60, not 3600: an hour of serve-stale on top of the cache was how a dead answer kept
@@ -1573,8 +1586,8 @@ async function handle(request) {
         var d = g.date ? new Date(typeof g.date === "string" ? g.date : (g.date.start || g.date)) : null;
         out.push({
           id: sport + "-" + (g.id || i), home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
-          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }) : "",
-          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }) : "",
+          time: d ? fmtTime(d) : "",
+          date: d ? fmtDate(d) : "",
           league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
         });
       });
@@ -1840,8 +1853,8 @@ async function handle(request) {
         out.push({
           id: sport + "-" + (g.id || i),
           home: h.name || "?", away: a.name || "?", homeLogo: h.logo || null, awayLogo: a.logo || null,
-          time: d ? d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" }) : "",
-          date: d ? d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Istanbul" }) : "",
+          time: d ? fmtTime(d) : "",
+          date: d ? fmtDate(d) : "",
           league: (g.league && g.league.name) || "", status: st, score: sc, minute: null, namesOnly: true,
         });
       });
@@ -1994,7 +2007,7 @@ async function handle(request) {
       else awayWins++;
       const d = new Date(item.fixture.date);
       list.push({
-        date: d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Istanbul" }),
+        date: FMT_DATE_TR_Y.format(d),
         ts: item.fixture.date,
         home: item.teams.home.name,
         away: item.teams.away.name,
@@ -2493,13 +2506,22 @@ async function handle(request) {
 
   const nameById = LEAGUE_NAMES;
 
+  // `tier=priority` (the app's Tüm Maçlar list) carries the curated leagues ONLY — live included,
+  // but only theirs. Decided here, before a fixture is mapped, because that is where the cost is:
+  // the day feeds arrive with every competition in the world (~7000 rows on a Saturday) and mapping
+  // them all just to trim to a hundred was what burned the CPU budget. Product-wise the same call
+  // (user, 5 Sep 2026): a person at a ground cares about the match near them — that is the map's
+  // nearby feed, which reads the raw day feeds and is untouched — and a lower-league match is a
+  // search away; the list does not have to be a Sofascore. The web (no tier) still gets the world.
+  const priorityOnly = searchParams.get("tier") === "priority";
   const all = [];
   const seen = {};
   function add(item) {
     var id = String(item.fixture.id);
     if (seen[id]) return;
-    seen[id] = true;
     var lid = item.league && item.league.id;
+    if (priorityOnly && PRIORITY_RANK[lid] == null) return;
+    seen[id] = true;
     all.push(mapFixture(item, nameById[lid] || null));
   }
 
@@ -2558,6 +2580,8 @@ async function handle(request) {
   // curated fixtures do not fill the list on their own — because that is exactly the case where it
   // would have held a slot an hour ago, when it was still the soonest kick-off in that half. Where
   // there is no room for it now there was none for it then, and it was never on the list to fall off.
+  // (With `priorityOnly` above the feed already holds nothing but curated leagues, so `rest` is
+  // empty and the live rule collapses to "every live match here" — the count exemption is what remains.)
   const trim = clampInt(searchParams.get("limit"), 0, 500);
   if (trim && searchParams.get("tier") === "priority") {
     const byWhen = function (list) {
