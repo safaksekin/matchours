@@ -420,11 +420,14 @@ function searchSafe(s) {
 // forever, since a postponed match never gets a score to move it on.
 //   PST postponed · CANC cancelled · ABD abandoned  -> it is not going to be played at this time
 //   AWD awarded  · WO walkover                      -> decided, just not on the pitch
-//   SUSP suspended                                  -> halted mid-match, may resume: still live
+//   INT interrupted · SUSP suspended                -> halted mid-match. NOT live: the provider keeps
+//      these for as long as the federation takes to decide (Utrecht–Go Ahead Eagles sat on INT for a
+//      day, 5 Sep 2026, and every phone showed it "CANLI" the whole time). Parked with postponed —
+//      not in play, not over — until the API moves it on (2H… when it resumes, ABD/AWD/FT when not).
 function statusOf(short) {
-  if (["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"].includes(short)) return "live";
+  if (["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(short)) return "live";
   if (["FT", "AET", "PEN", "AWD", "WO"].includes(short)) return "finished";
-  if (["PST", "CANC", "ABD"].includes(short)) return "postponed";
+  if (["PST", "CANC", "ABD", "INT", "SUSP"].includes(short)) return "postponed";
   return "upcoming";
 }
 
